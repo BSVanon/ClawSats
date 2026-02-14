@@ -439,12 +439,14 @@ program
     }
   });
 
-// Watch command — scan for CLAWSATS_V1 beacons (BrowserAI #6)
+// Watch command — active peer discovery daemon
 program
   .command('watch')
-  .description('Scan for CLAWSATS_V1 on-chain beacons and probe discovered Claws')
+  .description('Active peer discovery: probe known peers, discover new ones, auto-invite. Runs continuously.')
   .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
-  .option('--limit <n>', 'Max beacons to process', '20')
+  .option('--interval <seconds>', 'Seconds between discovery sweeps', '60')
+  .option('--seeds <urls>', 'Comma-separated seed peer URLs to bootstrap from')
+  .option('--once', 'Run one sweep and exit (don\'t loop)')
   .action(async (options) => {
     try {
       // Load wallet
@@ -457,39 +459,110 @@ program
         await walletManager.loadWallet(configPath);
       }
 
+      const config = walletManager.getConfig()!;
       const wallet = walletManager.getWallet();
-      console.log('🔭 Scanning for CLAWSATS_V1 beacons...');
+      const sharing = new SharingProtocol(config, wallet);
+      const knownPeers = new Map<string, { endpoint: string; capabilities: string[] }>();
+      const interval = parseInt(options.interval, 10) * 1000;
 
-      // Query wallet for beacon-labeled actions
-      try {
-        const actions = await wallet.listActions({
-          labels: ['clawsats-beacon'],
-          limit: parseInt(options.limit, 10),
-          includeOutputs: true
-        });
+      // Seed peers from CLI or config
+      const seeds: string[] = options.seeds
+        ? options.seeds.split(',').map((s: string) => s.trim()).filter(Boolean)
+        : [];
 
-        if (!actions.actions?.length) {
-          console.log('  No beacons found in local wallet history.');
-          console.log('  In production, this will scan overlay networks and on-chain OP_RETURNs.');
+      console.log(`🔭 ClawSats Peer Discovery Daemon`);
+      console.log(`  Identity: ${config.identityKey.substring(0, 24)}...`);
+      console.log(`  Interval: ${interval / 1000}s`);
+      if (seeds.length) console.log(`  Seeds: ${seeds.join(', ')}`);
+
+      async function discoverySweep() {
+        const startTime = Date.now();
+        let discovered = 0;
+        let probed = 0;
+
+        // Collect all endpoints to probe: seeds + known peers
+        const toProbe = new Set<string>(seeds);
+        for (const [, peer] of knownPeers) {
+          if (peer.endpoint) toProbe.add(peer.endpoint);
+        }
+
+        if (toProbe.size === 0) {
+          console.log('  No peers to probe. Use --seeds or share with a peer first.');
           return;
         }
 
-        console.log(`  Found ${actions.actions.length} beacon(s):`);
-        for (const action of actions.actions) {
-          console.log(`  • TXID: ${action.txid}`);
+        for (const endpoint of toProbe) {
+          probed++;
+          try {
+            // Probe /discovery
+            const discRes = await fetch(`${endpoint}/discovery`, {
+              signal: AbortSignal.timeout(8000)
+            });
+            if (!discRes.ok) continue;
+            const info: any = await discRes.json();
+
+            if (!info.identityKey || info.identityKey === config.identityKey) continue;
+
+            const isNew = !knownPeers.has(info.identityKey);
+            knownPeers.set(info.identityKey, {
+              endpoint,
+              capabilities: info.paidCapabilities?.map((c: any) => c.name) || []
+            });
+
+            if (isNew) {
+              discovered++;
+              const caps = info.paidCapabilities?.map((c: any) => `${c.name}(${c.pricePerCall}sat)`).join(', ') || 'none';
+              console.log(`  ✨ NEW: ${info.identityKey.substring(0, 16)}... at ${endpoint} — ${caps}`);
+
+              // Auto-invite: send our invitation so they know about us too
+              try {
+                const invitation = await sharing.createInvitation(`claw://${endpoint}`, {
+                  recipientEndpoint: endpoint
+                });
+                const invRes = await fetch(`${endpoint}/wallet/invite`, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify(invitation),
+                  signal: AbortSignal.timeout(8000)
+                });
+                if (invRes.ok) {
+                  console.log(`    📨 Auto-invited — mutual peer registration`);
+                }
+              } catch {
+                // Non-fatal — they know about us from the probe at least
+              }
+            }
+          } catch {
+            // Peer unreachable — skip
+          }
         }
-      } catch {
-        console.log('  Beacon scanning requires a funded wallet with history.');
-        console.log('  For now, use "discover" to probe known endpoints directly:');
-        console.log('    clawsats-wallet discover http://<peer>:3321');
+
+        const elapsed = Date.now() - startTime;
+        console.log(`  Sweep: probed ${probed}, discovered ${discovered} new, ${knownPeers.size} total known (${elapsed}ms)`);
       }
 
-      console.log('\n  Reference watcher: in production, this command will:');
-      console.log('    1. Scan overlay networks for CLAWSATS_V1 OP_RETURNs');
-      console.log('    2. Parse strict beacon payload (v, id, ep, ch, cap, ts, sig)');
-      console.log('    3. Verify beacon signature against id (pubkey)');
-      console.log('    4. Probe discovered endpoints via /discovery');
-      console.log('    5. Surface new gigs to the local Claw');
+      // Run first sweep immediately
+      await discoverySweep();
+
+      if (options.once) {
+        console.log('\n  One-shot mode. Exiting.');
+        return;
+      }
+
+      // Run continuously
+      console.log(`\n  Running continuously. Ctrl+C to stop.\n`);
+      const timer = setInterval(discoverySweep, interval);
+
+      const shutdown = () => {
+        clearInterval(timer);
+        console.log('\n  Discovery daemon stopped.');
+        process.exit(0);
+      };
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
+
+      // Keep alive
+      await new Promise(() => {});
 
     } catch (error) {
       console.error('❌ Watch failed:', error instanceof Error ? error.message : String(error));

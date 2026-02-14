@@ -25,6 +25,8 @@ export class JsonRpcServer {
   private nonceCache: NonceCache;
   private inviteRateLimiter: RateLimiter;
   private paymentDedupeCache: Set<string> = new Set();
+  private referralMap: Map<string, string> = new Map(); // callerKey → introducerKey
+  private referralLedger: Map<string, number> = new Map(); // introducerKey → earned sats
   private port: number;
   private host: string;
   private apiKey?: string;
@@ -385,6 +387,13 @@ export class JsonRpcServer {
         };
         this.peerRegistry.addPeer(peer);
 
+        // Track referral: if this announcement was relayed by broadcast_listing,
+        // record who introduced this peer so they earn referral bounties
+        if (announcement.referredBy && typeof announcement.referredBy === 'string') {
+          this.referralMap.set(announcement.identityKey, announcement.referredBy);
+          log(TAG, `Referral tracked: ${announcement.identityKey.substring(0, 12)}... introduced by ${announcement.referredBy.substring(0, 12)}...`);
+        }
+
         log(TAG, `Received announcement from ${announcement.identityKey.substring(0, 12)}... (verified=${verified})`);
         res.json({ registered: true, verified, peersKnown: this.peerRegistry.size() });
       } catch (error) {
@@ -539,6 +548,34 @@ export class JsonRpcServer {
 
         const result = await cap.handler(req.body, wallet);
 
+        // Build signed receipt — cryptographic proof the work was done
+        const providerKey = this.walletManager.getConfig()?.identityKey || '';
+        const receiptId = `rcpt-${Date.now()}-${randomBytes(4).toString('hex')}`;
+        const resultHash = createHash('sha256')
+          .update(canonicalJson(result))
+          .digest('hex');
+        const receiptData = {
+          receiptId,
+          capability: capName,
+          provider: providerKey,
+          requester: senderIdentityKey,
+          satoshisPaid: cap.pricePerCall,
+          feeSats: FEE_SATS,
+          resultHash,
+          timestamp: new Date().toISOString()
+        };
+        let receiptSignature = '';
+        try {
+          const sigResult = await wallet.createSignature({
+            data: Array.from(Buffer.from(canonicalJson(receiptData), 'utf8')),
+            protocolID: [0, 'clawsats-receipt'],
+            keyID: 'receipt-v1'
+          });
+          receiptSignature = Buffer.from(sigResult.signature).toString('base64');
+        } catch {
+          // Non-fatal — receipt is still useful unsigned
+        }
+
         // Track the caller as a peer if they provided identity
         if (senderIdentityKey) {
           this.peerRegistry.addPeer({
@@ -550,10 +587,16 @@ export class JsonRpcServer {
             lastSeen: new Date().toISOString(),
             reputation: 40
           });
+          // Track referral: who introduced this caller?
+          this.trackReferral(senderIdentityKey, capName, cap.pricePerCall);
         }
 
         res.set({ 'x-bsv-payment-satoshis-paid': String(cap.pricePerCall) });
-        res.json({ result, satoshisPaid: cap.pricePerCall });
+        res.json({
+          result,
+          satoshisPaid: cap.pricePerCall,
+          receipt: { ...receiptData, signature: receiptSignature }
+        });
       } catch (error) {
         logError(TAG, 'Capability call failed:', error);
         const msg = error instanceof Error ? error.message : String(error);
@@ -703,6 +746,46 @@ export class JsonRpcServer {
       log(TAG, `Invitation sent to ${endpoint} — accepted: ${response.accepted}`);
       return { accepted: response.accepted, peersKnown: this.peerRegistry.size() };
     });
+
+    // Referral system methods
+    this.rpcServer.addMethod('listReferrals', async () => {
+      const entries: { introducer: string; earnedSats: number }[] = [];
+      for (const [key, sats] of this.referralLedger) {
+        entries.push({ introducer: key, earnedSats: sats });
+      }
+      return {
+        referrals: entries,
+        totalEarned: entries.reduce((sum, e) => sum + e.earnedSats, 0),
+        trackedIntroductions: this.referralMap.size
+      };
+    });
+
+    // Receipt verification — any Claw can verify a receipt from another Claw
+    this.rpcServer.addMethod('verifyReceipt', async (params: any) => {
+      const { receipt } = params;
+      if (!receipt || !receipt.receiptId) throw new Error('Missing receipt');
+      if (!receipt.signature) return { valid: false, reason: 'Unsigned receipt' };
+
+      const wallet = this.walletManager.getWallet();
+      const { signature, ...data } = receipt;
+      try {
+        const result = await wallet.verifySignature({
+          data: Array.from(Buffer.from(canonicalJson(data), 'utf8')),
+          signature: Array.from(Buffer.from(signature, 'base64')),
+          protocolID: [0, 'clawsats-receipt'],
+          keyID: 'receipt-v1',
+          counterparty: receipt.provider
+        });
+        return {
+          valid: result.valid === true,
+          receipt: data,
+          verifiedAt: new Date().toISOString()
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { valid: false, reason: msg };
+      }
+    });
   }
 
   private registerBuiltinCapabilities(): void {
@@ -723,9 +806,18 @@ export class JsonRpcServer {
     this.capabilityRegistry.registerTimestampAttest(walletProxy, identityKey);
 
     // Broadcast listing: the spreading flywheel (with anti-abuse per BrowserAI #3)
+    // Pass our identity key so relayed manifests get tagged with referredBy
     this.capabilityRegistry.registerBroadcastListing(
-      () => this.peerRegistry.getAllPeers().map(p => p.endpoint).filter(Boolean)
+      () => this.peerRegistry.getAllPeers().map(p => p.endpoint).filter(Boolean),
+      undefined,
+      identityKey
     );
+
+    // Phase 3: Real-world capabilities — things Claws actually hire each other for
+    this.capabilityRegistry.registerFetchUrl(walletProxy, identityKey);
+    this.capabilityRegistry.registerDnsResolve(identityKey);
+    this.capabilityRegistry.registerVerifyReceipt(walletProxy, identityKey);
+    this.capabilityRegistry.registerPeerHealthCheck(identityKey);
   }
 
   getApp(): express.Application {
@@ -746,6 +838,20 @@ export class JsonRpcServer {
       port: this.port,
       apiKey: !!this.apiKey
     };
+  }
+
+  /**
+   * Track referral: if this caller was introduced by a broadcast_listing,
+   * credit the introducer. This is the viral incentive — Claws earn by
+   * telling other Claws about new Claws.
+   */
+  private trackReferral(callerKey: string, capability: string, satsPaid: number): void {
+    const introducer = this.referralMap.get(callerKey);
+    if (!introducer) return;
+    // Credit 1 sat per referred paid call to the introducer
+    const current = this.referralLedger.get(introducer) || 0;
+    this.referralLedger.set(introducer, current + 1);
+    log(TAG, `Referral credit: ${introducer.substring(0, 12)}... earned 1 sat from ${callerKey.substring(0, 12)}... calling ${capability}`);
   }
 
   /**

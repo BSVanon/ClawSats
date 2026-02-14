@@ -56,6 +56,12 @@ export const SIGN_MESSAGE_PRICE_SATS = 5;
 export const HASH_COMMIT_PRICE_SATS = 5;
 export const TIMESTAMP_ATTEST_PRICE_SATS = 5;
 
+// Phase 3 real-world capabilities — things Claws actually hire each other for
+export const FETCH_URL_PRICE_SATS = 15;         // Fetch a URL and return content (web proxy)
+export const DNS_RESOLVE_PRICE_SATS = 3;         // DNS lookup from provider's vantage point
+export const VERIFY_RECEIPT_PRICE_SATS = 3;       // Verify a ClawSats receipt signature
+export const PEER_HEALTH_CHECK_PRICE_SATS = 5;   // Check if a peer endpoint is alive + latency
+
 // ── Beacon format ────────────────────────────────────────────────────
 // OP_RETURN: OP_FALSE OP_RETURN <tag_push> <payload_push>
 // tag_push  = utf8("CLAWSATS_V1")
