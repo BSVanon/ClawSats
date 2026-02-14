@@ -3,6 +3,7 @@
 import { Command } from 'commander';
 import { WalletManager } from '../core/WalletManager';
 import { JsonRpcServer } from '../server/JsonRpcServer';
+import { SharingProtocol } from '../protocol';
 import { CreateWalletOptions, ServeOptions } from '../types';
 import { existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
@@ -113,83 +114,58 @@ program
 program
   .command('share')
   .description('Share wallet capabilities with other Claws')
-  .requiredOption('-r, --recipient <clawId>', 'Recipient Claw ID (e.g., claw://friend-id)')
-  .option('-c, --capability <type>', 'Capability to share', 'payment')
-  .option('-m, --message <text>', 'Optional message to include')
-  .option('--auto-deploy', 'Include auto-deployment script', true)
-  .option('--channels <channels>', 'Channels to use (comma-separated: messagebox,overlay,direct)', 'messagebox,overlay')
-  .option('-o, --output <file>', 'Output invitation file (optional)')
+  .requiredOption('-r, --recipient <clawIdOrUrl>', 'Recipient Claw ID or endpoint URL (e.g., http://1.2.3.4:3321)')
+  .option('-o, --output <file>', 'Save invitation to file instead of sending')
+  .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
   .action(async (options) => {
     try {
-      const config = walletManager.getConfig();
-      if (!config) {
-        console.error('❌ Wallet not initialized. Create or load a wallet first.');
-        process.exit(1);
+      // Load wallet if not already loaded
+      if (!walletManager.getConfig()) {
+        const configPath = join(process.cwd(), options.config);
+        if (!existsSync(configPath)) {
+          console.error('❌ Config not found. Create a wallet first: clawsats-wallet create');
+          process.exit(1);
+        }
+        await walletManager.loadWallet(configPath);
       }
 
-      console.log('Creating wallet invitation...');
-      
-      // Generate invitation
-      const invitation = {
-        type: 'wallet-invitation',
-        version: '1.0',
-        invitationId: `invite-${Date.now()}`,
-        sender: {
-          clawId: `claw://${config.identityKey.substring(0, 16)}`,
-          identityKey: config.identityKey,
-          endpoint: config.endpoints.jsonrpc
-        },
-        recipient: {
-          clawId: options.recipient
-        },
-        walletConfig: {
-          chain: config.chain,
-          capabilities: config.capabilities,
-          autoDeployScript: 'https://clawsats.org/deploy/v1.sh',
-          configTemplate: {
-            identityKey: '{{GENERATED}}',
-            endpoints: {
-              jsonrpc: 'http://localhost:3321'
-            }
-          }
-        },
-        expires: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(), // 7 days
-        signature: 'TODO: Generate signature',
-        timestamp: new Date().toISOString()
-      };
+      const config = walletManager.getConfig()!;
+      const sharing = new SharingProtocol(config);
+      const invitation = await sharing.createInvitation(options.recipient);
 
-      // Save to file if output specified
-      if (options.output) {
+      console.log(`📨 Invitation created: ${invitation.invitationId}`);
+
+      // If recipient looks like a URL, send it directly via HTTP
+      if (options.recipient.startsWith('http://') || options.recipient.startsWith('https://')) {
+        console.log(`📤 Sending invitation to ${options.recipient}/wallet/invite ...`);
+        const res = await fetch(`${options.recipient}/wallet/invite`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(invitation),
+          signal: AbortSignal.timeout(10000)
+        });
+
+        if (!res.ok) {
+          const body = await res.text();
+          console.error(`❌ Invitation rejected (${res.status}): ${body}`);
+          process.exit(1);
+        }
+
+        const response: any = await res.json();
+        console.log(`✅ Invitation accepted!`);
+        if (response.announcement?.identityKey) {
+          console.log(`  Peer identity: ${response.announcement.identityKey.substring(0, 24)}...`);
+        }
+        console.log(`  Peers known by recipient: ${response.peersKnown}`);
+      } else if (options.output) {
         writeFileSync(options.output, JSON.stringify(invitation, null, 2));
         console.log(`✅ Invitation saved to: ${options.output}`);
       } else {
+        // Print to stdout for piping
         console.log(JSON.stringify(invitation, null, 2));
       }
-
-      console.log('\n📤 Sharing via channels:');
-      options.channels.split(',').forEach((channel: string) => {
-        switch (channel.trim()) {
-          case 'messagebox':
-            console.log('  • BRC-33 MessageBox: Direct Claw-to-Claw messaging');
-            break;
-          case 'overlay':
-            console.log('  • Overlay Network: Broadcast to multiple Claws');
-            break;
-          case 'direct':
-            console.log('  • Direct HTTP: Send invitation via HTTP');
-            break;
-        }
-      });
-
-      console.log('\n📋 Next steps for recipient:');
-      console.log('  1. Save invitation to file: invitation.json');
-      console.log('  2. Run auto-deployment:');
-      console.log(`     curl -s https://clawsats.org/deploy/v1.sh | bash -s -- ${options.recipient} invitation.json`);
-      console.log('  3. Or manually deploy:');
-      console.log('     clawsats-wallet create --config invitation.json');
-
     } catch (error) {
-      console.error('❌ Failed to create invitation:', error instanceof Error ? error.message : String(error));
+      console.error('❌ Failed to share:', error instanceof Error ? error.message : String(error));
       process.exit(1);
     }
   });
@@ -222,28 +198,113 @@ program
     }
   });
 
-// Discovery command
+// Discovery command — probe a known endpoint for its discovery info
 program
   .command('discover')
-  .description('Discover nearby Claws with wallet capabilities')
-  .option('-c, --capability <type>', 'Capability to search for', 'payment')
-  .option('-n, --network <chain>', 'Network to search (test/main)', 'test')
-  .option('-l, --limit <number>', 'Maximum results', '10')
-  .action(async (options) => {
+  .description('Probe a Claw endpoint for its capabilities and peer info')
+  .argument('[endpoint]', 'Endpoint URL to probe (e.g., http://1.2.3.4:3321)')
+  .action(async (endpoint) => {
     try {
-      console.log(`🔍 Discovering Claws with ${options.capability} capability...`);
-      
-      // In production, this would query overlay networks, DHT, or registries
-      console.log('Discovery service coming soon!');
-      console.log('\nPlanned discovery methods:');
-      console.log('  • Local network broadcast');
-      console.log('  • Overlay network queries');
-      console.log('  • Distributed Hash Table (DHT)');
-      console.log('  • On-chain announcements');
-      console.log('\nFor now, share invitations directly with known Claws.');
-      
+      if (!endpoint) {
+        console.log('Usage: clawsats-wallet discover <endpoint>');
+        console.log('Example: clawsats-wallet discover http://1.2.3.4:3321');
+        return;
+      }
+
+      console.log(`🔍 Probing ${endpoint}/discovery ...`);
+      const res = await fetch(`${endpoint}/discovery`, {
+        signal: AbortSignal.timeout(10000)
+      });
+
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      }
+
+      const info: any = await res.json();
+      console.log('✅ Claw discovered:');
+      console.log(`  Protocol:     ${info.protocol}`);
+      console.log(`  Identity:     ${info.identityKey?.substring(0, 24)}...`);
+      console.log(`  Network:      ${info.network}`);
+      console.log(`  Known peers:  ${info.knownPeers}`);
+      console.log(`  BRC-100:      ${(info.capabilities || []).join(', ')}`);
+      if (info.paidCapabilities?.length) {
+        console.log('  Paid capabilities:');
+        for (const cap of info.paidCapabilities) {
+          console.log(`    • ${cap.name} — ${cap.pricePerCall} sats — ${cap.description}`);
+        }
+      }
+      console.log(`  Endpoints:`);
+      for (const [name, url] of Object.entries(info.endpoints || {})) {
+        console.log(`    • ${name}: ${url}`);
+      }
     } catch (error) {
       console.error('❌ Discovery failed:', error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
+
+// Announce command — publish OP_RETURN beacon on-chain
+program
+  .command('announce')
+  .description('Publish an on-chain CLAWSATS_V1 beacon (OP_RETURN)')
+  .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
+  .option('--endpoint <url>', 'Public endpoint URL to advertise')
+  .action(async (options) => {
+    try {
+      // Load wallet
+      if (!walletManager.getConfig()) {
+        const configPath = join(process.cwd(), options.config);
+        if (!existsSync(configPath)) {
+          console.error('❌ Config not found. Create a wallet first.');
+          process.exit(1);
+        }
+        await walletManager.loadWallet(configPath);
+      }
+
+      const config = walletManager.getConfig()!;
+      const wallet = walletManager.getWallet();
+      const endpoint = options.endpoint || config.endpoints.jsonrpc;
+
+      // Build OP_RETURN beacon data
+      const beaconPayload = JSON.stringify({
+        protocol: 'CLAWSATS_V1',
+        identityKey: config.identityKey,
+        endpoint,
+        chain: config.chain,
+        capabilities: config.capabilities,
+        timestamp: new Date().toISOString()
+      });
+
+      const opReturnScript = `006a${Buffer.from('CLAWSATS_V1').toString('hex')}${Buffer.from(beaconPayload).toString('hex')}`;
+
+      console.log('📡 Publishing on-chain beacon...');
+      console.log(`  Tag:      CLAWSATS_V1`);
+      console.log(`  Endpoint: ${endpoint}`);
+      console.log(`  Chain:    ${config.chain}`);
+
+      try {
+        const result = await wallet.createAction({
+          description: 'ClawSats beacon announcement',
+          outputs: [{
+            satoshis: 0,
+            script: opReturnScript,
+            outputDescription: 'CLAWSATS_V1 beacon'
+          }],
+          labels: ['clawsats-beacon'],
+          options: { signAndProcess: true, acceptDelayedBroadcast: true }
+        });
+
+        console.log(`✅ Beacon published!`);
+        console.log(`  TXID: ${result.txid}`);
+        console.log(`  Any Claw scanning for CLAWSATS_V1 OP_RETURNs will find you.`);
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error(`⚠️  Beacon tx failed: ${msg}`);
+        console.log('  This may require funded UTXOs. Fund the wallet first.');
+        console.log(`  Beacon payload (for manual broadcast):\n  ${beaconPayload}`);
+      }
+    } catch (error) {
+      console.error('❌ Announce failed:', error instanceof Error ? error.message : String(error));
       process.exit(1);
     }
   });

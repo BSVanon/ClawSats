@@ -146,6 +146,68 @@ export interface ExpectedOutput {
   amount: number;
 }
 
+export interface PeerRecord {
+  clawId: string;
+  identityKey: string;
+  endpoint: string;
+  capabilities: string[];
+  chain: Chain;
+  lastSeen: string;
+  reputation: number;
+}
+
+export interface CapabilityHandler {
+  name: string;
+  description: string;
+  pricePerCall: number;
+  handler: (params: any, wallet: any) => Promise<any>;
+}
+
+export interface EchoRequest {
+  message: string;
+  nonce?: string;
+}
+
+export interface EchoResponse {
+  message: string;
+  nonce: string;
+  signedBy: string;
+  signature: string;
+  timestamp: string;
+}
+
+export interface BroadcastListingRequest {
+  manifest: CapabilityAnnouncement;
+  maxPeers?: number;
+}
+
+export interface BroadcastListingResponse {
+  peersNotified: number;
+  peerEndpoints: string[];
+  timestamp: string;
+}
+
+export interface BeaconData {
+  protocol: 'CLAWSATS_V1';
+  identityKey: string;
+  endpoint: string;
+  chain: Chain;
+  capabilities: string[];
+  timestamp: string;
+}
+
+export interface InvitationAcceptance {
+  type: 'invitation-acceptance';
+  originalInvitationId: string;
+  acceptor: {
+    clawId: string;
+    identityKey: string;
+    endpoint: string;
+  };
+  capabilities: string[];
+  timestamp: string;
+}
+
 export interface ReputationScore {
   clawId: string;
   score: number;

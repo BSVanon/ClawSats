@@ -1,7 +1,9 @@
 export { WalletManager } from './core/WalletManager';
+export { PeerRegistry } from './core/PeerRegistry';
+export { CapabilityRegistry } from './core/CapabilityRegistry';
 export { JsonRpcServer } from './server/JsonRpcServer';
 export { SharingProtocol } from './protocol';
-export { formatIdentityKey, generateNonce } from './utils';
+export { formatIdentityKey, generateNonce, canonicalJson, log, logWarn, logError } from './utils';
 export {
   WalletConfig,
   Chain,
@@ -14,5 +16,13 @@ export {
   DiscoveryResponse,
   PaymentChallengeHeaders,
   ExpectedOutput,
+  PeerRecord,
+  CapabilityHandler,
+  EchoRequest,
+  EchoResponse,
+  BroadcastListingRequest,
+  BroadcastListingResponse,
+  BeaconData,
+  InvitationAcceptance,
   ReputationScore
 } from './types';

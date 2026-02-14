@@ -15,20 +15,40 @@ import { generateNonce, canonicalJson } from '../utils';
  */
 export class SharingProtocol {
   private config: WalletConfig;
+  private wallet: any | null;
 
-  constructor(config: WalletConfig) {
+  constructor(config: WalletConfig, wallet?: any) {
     this.config = config;
+    this.wallet = wallet || null;
+  }
+
+  /**
+   * Sign a payload using the wallet's identity key.
+   * Returns base64 signature or empty string if wallet unavailable.
+   */
+  async signPayload(payload: string): Promise<string> {
+    if (!this.wallet) return '';
+    try {
+      const result = await this.wallet.createSignature({
+        data: Array.from(Buffer.from(payload, 'utf8')),
+        protocolID: [0, 'clawsats-sharing'],
+        keyID: 'sharing-v1'
+      });
+      return Buffer.from(result.signature).toString('base64');
+    } catch {
+      return '';
+    }
   }
 
   /**
    * Create a wallet invitation for another Claw.
    */
-  createInvitation(recipientClawId: string, options: {
+  async createInvitation(recipientClawId: string, options: {
     capabilities?: string[];
     expiresInMs?: number;
     autoDeployScript?: string;
     message?: string;
-  } = {}): Invitation {
+  } = {}): Promise<Invitation> {
     const {
       capabilities = this.config.capabilities,
       expiresInMs = 7 * 24 * 60 * 60 * 1000,
@@ -59,9 +79,12 @@ export class SharingProtocol {
         }
       },
       expires: new Date(Date.now() + expiresInMs).toISOString(),
-      signature: '', // TODO: sign with identity key once crypto wiring is complete
+      signature: '',
       timestamp: new Date().toISOString()
     };
+
+    // Sign the invitation if wallet is available
+    invitation.signature = await this.signPayload(this.serializeForSigning(invitation));
 
     return invitation;
   }
@@ -69,18 +92,18 @@ export class SharingProtocol {
   /**
    * Create a capability announcement for broadcast.
    */
-  createAnnouncement(options: {
+  async createAnnouncement(options: {
     overlayTopics?: string[];
     rateLimit?: string;
     costPerCall?: number;
-  } = {}): CapabilityAnnouncement {
+  } = {}): Promise<CapabilityAnnouncement> {
     const {
       overlayTopics = ['clawsats-wallets', 'bsv-payments'],
       rateLimit = '100/day',
       costPerCall = 0
     } = options;
 
-    return {
+    const announcement: CapabilityAnnouncement = {
       type: 'capability-announcement',
       version: '1.0',
       announcementId: `ann-${Date.now()}-${randomBytes(4).toString('hex')}`,
@@ -98,24 +121,27 @@ export class SharingProtocol {
         overlayTopics,
         messageBoxId: `msgbox://${this.config.identityKey.substring(0, 16)}`
       },
-      signature: '', // TODO: sign
+      signature: '',
       timestamp: new Date().toISOString()
     };
+
+    announcement.signature = await this.signPayload(this.serializeForSigning(announcement));
+    return announcement;
   }
 
   /**
    * Create a discovery query to find Claws with specific capabilities.
    */
-  createDiscoveryQuery(capability: string, options: {
+  async createDiscoveryQuery(capability: string, options: {
     maxResults?: number;
     responseEndpoint?: string;
-  } = {}): DiscoveryQuery {
+  } = {}): Promise<DiscoveryQuery> {
     const {
       maxResults = 10,
       responseEndpoint = `${this.config.endpoints.jsonrpc}/discovery/callback`
     } = options;
 
-    return {
+    const query: DiscoveryQuery = {
       type: 'discovery-query',
       version: '1.0',
       queryId: `query-${Date.now()}-${randomBytes(4).toString('hex')}`,
@@ -127,9 +153,12 @@ export class SharingProtocol {
         maxResults
       },
       responseEndpoint,
-      signature: '', // TODO: sign
+      signature: '',
       timestamp: new Date().toISOString()
     };
+
+    query.signature = await this.signPayload(this.serializeForSigning(query));
+    return query;
   }
 
   /**
