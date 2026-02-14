@@ -53,10 +53,8 @@ program
   .command('create')
   .description('Create a new BRC-100 wallet')
   .option('-n, --name <name>', 'Wallet name', `claw-${Date.now()}`)
-  .option('-c, --chain <chain>', 'Blockchain network (test/main)', 'test')
+  .option('-c, --chain <chain>', 'Blockchain network (main/test)', 'main')
   .option('-s, --storage <type>', 'Storage type (sqlite/memory)', 'sqlite')
-  .option('--auto-fund', 'Automatically fund with testnet BSV', false)
-  .option('--no-auto-fund', 'Skip testnet funding')
   .action(async (options) => {
     try {
       console.log('Creating new ClawSats wallet...');
@@ -64,8 +62,7 @@ program
       const walletOptions: CreateWalletOptions = {
         name: options.name,
         chain: options.chain,
-        storageType: options.storage,
-        autoFund: options.autoFund
+        storageType: options.storage
       };
 
       const config = await walletManager.createWallet(walletOptions);
@@ -351,7 +348,7 @@ program
   .description('One command: create wallet + start server + publish beacon. You are live.')
   .option('-p, --port <port>', 'Port to listen on', '3321')
   .option('-H, --host <host>', 'Host to bind to', '0.0.0.0')
-  .option('-c, --chain <chain>', 'Blockchain network (test/main)', 'test')
+  .option('-c, --chain <chain>', 'Blockchain network (main/test)', 'main')
   .option('-n, --name <name>', 'Wallet name', `claw-${Date.now()}`)
   .option('-k, --api-key <key>', 'API key for admin JSON-RPC (auto-generated if public bind)')
   .option('--endpoint <url>', 'Public endpoint URL to advertise')
@@ -373,7 +370,6 @@ program
           name: options.name,
           chain: options.chain,
           storageType: 'sqlite',
-          autoFund: options.chain === 'test'  // Auto-fund on testnet so Claws bootstrap without human help
         });
       }
 

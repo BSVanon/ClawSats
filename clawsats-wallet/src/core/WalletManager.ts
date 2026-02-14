@@ -17,7 +17,7 @@ export class WalletManager {
   async createWallet(options: CreateWalletOptions = {}): Promise<WalletConfig> {
     const {
       name = `claw-${Date.now()}`,
-      chain = 'test',
+      chain = 'main',
       rootKeyHex = PrivateKey.fromRandom().toHex(),
       storageType = 'sqlite',
       storagePath: customPath,

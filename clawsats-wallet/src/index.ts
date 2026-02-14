@@ -7,6 +7,7 @@ export { RateLimiter } from './core/RateLimiter';
 export { JsonRpcServer } from './server/JsonRpcServer';
 export { SharingProtocol } from './protocol';
 export { CourseManager } from './courses/CourseManager';
+export { OnChainMemory } from './memory/OnChainMemory';
 export { formatIdentityKey, generateNonce, canonicalJson, log, logWarn, logError } from './utils';
 export * from './protocol/constants';
 export {

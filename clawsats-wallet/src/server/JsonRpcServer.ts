@@ -13,6 +13,7 @@ import { INVITE_MAX_PER_HOUR, FEE_SATS, FEE_IDENTITY_KEY } from '../protocol/con
 import { ServeOptions, Invitation, PeerRecord } from '../types';
 import { log, logWarn, logError, canonicalJson } from '../utils';
 import { CourseManager } from '../courses/CourseManager';
+import { OnChainMemory } from '../memory/OnChainMemory';
 
 const TAG = 'server';
 
@@ -32,6 +33,7 @@ export class JsonRpcServer {
   private callStats: Map<string, number> = new Map(); // capability → total paid calls served
   private uniqueCallers: Set<string> = new Set(); // unique identity keys that have paid us
   private courseManager: CourseManager;
+  private onChainMemory: OnChainMemory;
   private port: number;
   private host: string;
   private apiKey?: string;
@@ -73,6 +75,11 @@ export class JsonRpcServer {
     if (coursesLoaded > 0) {
       log(TAG, `BSV Cluster Courses: ${coursesLoaded} courses available`);
     }
+
+    // Initialize On-Chain Memory
+    const identityKey = this.walletManager.getConfig()?.identityKey || 'unknown';
+    this.onChainMemory = new OnChainMemory(dataDir, identityKey);
+    this.onChainMemory.loadIndex();
 
     // Register built-in paid capabilities
     this.registerBuiltinCapabilities();
@@ -215,6 +222,20 @@ export class JsonRpcServer {
       }
     });
 
+    // ── Static files (BSV Scholarships page, etc.) ────────────────────
+    const publicDir = require('path').join(process.cwd(), 'public');
+    if (require('fs').existsSync(publicDir)) {
+      this.app.use('/static', express.static(publicDir));
+    }
+    this.app.get('/scholarships', (req: express.Request, res: express.Response) => {
+      const scholarshipsPath = require('path').join(process.cwd(), 'public', 'scholarships.html');
+      if (require('fs').existsSync(scholarshipsPath)) {
+        res.sendFile(scholarshipsPath);
+      } else {
+        res.status(404).json({ error: 'Scholarships page not found. Place scholarships.html in public/' });
+      }
+    });
+
     // ── BSV Cluster Courses: Public Endpoints ──────────────────────────
 
     // Donation endpoint — humans send BSV to fund Claw education
@@ -325,6 +346,7 @@ export class JsonRpcServer {
           coursesAvailable: this.courseManager.courseCount,
           canTeach: this.courseManager.getCompletedCourseIds().map(id => `teach_${id}`)
         },
+        onChainMemory: this.onChainMemory.getStats(),
         freeTrialAvailable: true,
         knownPeers: this.peerRegistry.size(),
         network: config?.chain,
@@ -1031,6 +1053,57 @@ export class JsonRpcServer {
     // Get spread metrics — how far has BSV education propagated?
     this.rpcServer.addMethod('spreadMetrics', async () => {
       return this.courseManager.getSpreadMetrics();
+    });
+
+    // ── On-Chain Memory RPC Methods ─────────────────────────────────────
+
+    // Write a memory on-chain (OP_RETURN, immutable)
+    this.rpcServer.addMethod('writeMemory', async (params: any) => {
+      const { key, data, category, encrypted, metadata } = params;
+      if (!key || typeof key !== 'string') throw new Error('Missing key (string)');
+      if (!data || typeof data !== 'string') throw new Error('Missing data (string)');
+      if (data.length > 100000) throw new Error('Data too large (max 100KB for OP_RETURN). Use PushDrop for larger data.');
+
+      const wallet = this.walletManager.getWallet();
+      const record = await this.onChainMemory.writeMemory(wallet, {
+        key, data, category, encrypted, metadata
+      });
+      return {
+        ...record,
+        message: `Memory "${key}" written on-chain permanently. txid: ${record.txid}`
+      };
+    });
+
+    // Read a memory record from the local index
+    this.rpcServer.addMethod('readMemory', async (params: any) => {
+      const { key } = params;
+      if (!key) throw new Error('Missing key');
+      const record = this.onChainMemory.getMemory(key);
+      if (!record) return { found: false, key };
+      return { found: true, ...record };
+    });
+
+    // List all memories
+    this.rpcServer.addMethod('listMemories', async (params: any) => {
+      const category = params?.category;
+      const memories = this.onChainMemory.listMemories(category);
+      return {
+        memories,
+        total: memories.length,
+        stats: this.onChainMemory.getStats()
+      };
+    });
+
+    // Search memories
+    this.rpcServer.addMethod('searchMemories', async (params: any) => {
+      const { query } = params;
+      if (!query) throw new Error('Missing query');
+      return { results: this.onChainMemory.searchMemories(query) };
+    });
+
+    // Get memory stats
+    this.rpcServer.addMethod('memoryStats', async () => {
+      return this.onChainMemory.getStats();
     });
   }
 
