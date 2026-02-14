@@ -165,6 +165,7 @@ export interface CapabilityHandler {
   name: string;
   description: string;
   pricePerCall: number;
+  tags?: string[];
   handler: (params: any, wallet: any) => Promise<any>;
 }
 

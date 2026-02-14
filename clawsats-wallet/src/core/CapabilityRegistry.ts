@@ -56,6 +56,7 @@ export class CapabilityRegistry {
       name: 'echo',
       description: 'Signed echo service — send a message, get it signed and returned. Proves 402 payment flow.',
       pricePerCall: ECHO_PRICE_SATS,
+      tags: ['utility', 'test', 'verification'],
       handler: async (params: { message: string; nonce?: string }) => {
         const message = params.message;
         if (!message || typeof message !== 'string') {
@@ -99,6 +100,7 @@ export class CapabilityRegistry {
       name: 'sign_message',
       description: 'Sign a message with provider identity key. Verifiable by anyone with the pubkey.',
       pricePerCall: SIGN_MESSAGE_PRICE_SATS,
+      tags: ['crypto', 'signing', 'verification'],
       handler: async (params: { message: string }) => {
         if (!params.message || typeof params.message !== 'string') {
           throw new Error('Missing required param: message (string)');
@@ -134,6 +136,7 @@ export class CapabilityRegistry {
       name: 'hash_commit',
       description: 'SHA-256 hash commitment with provider signature. Verifiable by re-hashing.',
       pricePerCall: HASH_COMMIT_PRICE_SATS,
+      tags: ['crypto', 'hashing', 'commitment'],
       handler: async (params: { payload: string }) => {
         if (!params.payload || typeof params.payload !== 'string') {
           throw new Error('Missing required param: payload (string)');
@@ -170,6 +173,7 @@ export class CapabilityRegistry {
       name: 'timestamp_attest',
       description: 'Timestamp attestation — provider signs {hash, timestamp}. Provable time witness.',
       pricePerCall: TIMESTAMP_ATTEST_PRICE_SATS,
+      tags: ['crypto', 'timestamp', 'attestation'],
       handler: async (params: { hash: string }) => {
         if (!params.hash || typeof params.hash !== 'string') {
           throw new Error('Missing required param: hash (string)');
@@ -213,6 +217,7 @@ export class CapabilityRegistry {
       name: 'broadcast_listing',
       description: `Paid broadcast — announce your manifest to known peers. Max ${BROADCAST_AUDIENCE_LIMIT} peers, ${BROADCAST_HOP_LIMIT} hops. Earns referral bounties.`,
       pricePerCall: BROADCAST_PRICE_SATS,
+      tags: ['network', 'viral', 'discovery', 'referral'],
       handler: async (params: {
         manifest: any;
         maxPeers?: number;
@@ -290,6 +295,7 @@ export class CapabilityRegistry {
       name: 'fetch_url',
       description: 'Fetch a URL from this Claw\'s vantage point. Returns content + headers, signed by provider.',
       pricePerCall: FETCH_URL_PRICE_SATS,
+      tags: ['web', 'proxy', 'fetch', 'geo'],
       handler: async (params: { url: string; method?: string; maxBytes?: number }) => {
         if (!params.url || typeof params.url !== 'string') {
           throw new Error('Missing required param: url (string)');
@@ -360,6 +366,7 @@ export class CapabilityRegistry {
       name: 'dns_resolve',
       description: 'DNS lookup from this Claw\'s vantage point. Returns A/AAAA/MX/TXT records.',
       pricePerCall: DNS_RESOLVE_PRICE_SATS,
+      tags: ['network', 'dns', 'geo', 'verification'],
       handler: async (params: { hostname: string; type?: string }) => {
         if (!params.hostname || typeof params.hostname !== 'string') {
           throw new Error('Missing required param: hostname (string)');
@@ -416,6 +423,7 @@ export class CapabilityRegistry {
       name: 'verify_receipt',
       description: 'Verify a ClawSats receipt signature. Independent trust verification.',
       pricePerCall: VERIFY_RECEIPT_PRICE_SATS,
+      tags: ['trust', 'verification', 'receipt'],
       handler: async (params: { receipt: any }) => {
         if (!params.receipt || !params.receipt.receiptId) {
           throw new Error('Missing required param: receipt (object with receiptId)');
@@ -457,6 +465,7 @@ export class CapabilityRegistry {
       name: 'peer_health_check',
       description: 'Check if a ClawSats peer is alive. Returns health status + latency from this Claw\'s vantage.',
       pricePerCall: PEER_HEALTH_CHECK_PRICE_SATS,
+      tags: ['monitoring', 'health', 'network', 'geo'],
       handler: async (params: { endpoint: string }) => {
         if (!params.endpoint || typeof params.endpoint !== 'string') {
           throw new Error('Missing required param: endpoint (string)');

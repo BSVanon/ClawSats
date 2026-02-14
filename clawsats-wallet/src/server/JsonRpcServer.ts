@@ -12,6 +12,7 @@ import { SharingProtocol } from '../protocol';
 import { INVITE_MAX_PER_HOUR, FEE_SATS, FEE_IDENTITY_KEY } from '../protocol/constants';
 import { ServeOptions, Invitation, PeerRecord } from '../types';
 import { log, logWarn, logError, canonicalJson } from '../utils';
+import { CourseManager } from '../courses/CourseManager';
 
 const TAG = 'server';
 
@@ -27,6 +28,10 @@ export class JsonRpcServer {
   private paymentDedupeCache: Set<string> = new Set();
   private referralMap: Map<string, string> = new Map(); // callerKey → introducerKey
   private referralLedger: Map<string, number> = new Map(); // introducerKey → earned sats
+  private freeTrialUsed: Set<string> = new Set(); // identity keys that used their free trial
+  private callStats: Map<string, number> = new Map(); // capability → total paid calls served
+  private uniqueCallers: Set<string> = new Set(); // unique identity keys that have paid us
+  private courseManager: CourseManager;
   private port: number;
   private host: string;
   private apiKey?: string;
@@ -59,8 +64,21 @@ export class JsonRpcServer {
     // Create JSON-RPC server
     this.rpcServer = new JSONRPCServer();
 
+    // Initialize BSV Cluster Courses
+    const dataDir = require('path').join(process.cwd(), 'data');
+    const coursesDir = require('path').join(process.cwd(), 'courses');
+    this.courseManager = new CourseManager(dataDir, coursesDir);
+    const coursesLoaded = this.courseManager.loadCourses();
+    this.courseManager.loadState();
+    if (coursesLoaded > 0) {
+      log(TAG, `BSV Cluster Courses: ${coursesLoaded} courses available`);
+    }
+
     // Register built-in paid capabilities
     this.registerBuiltinCapabilities();
+
+    // Register teach capabilities for completed courses
+    this.registerTeachCapabilities();
 
     // Configure middleware
     this.configureMiddleware(options.cors !== false);
@@ -197,6 +215,72 @@ export class JsonRpcServer {
       }
     });
 
+    // ── BSV Cluster Courses: Public Endpoints ──────────────────────────
+
+    // Donation endpoint — humans send BSV to fund Claw education
+    // POST /donate { donorName, coursesTargeted?, satoshis }
+    // In production this would accept a BRC-105 payment. For now it records intent.
+    this.app.post('/donate', async (req: express.Request, res: express.Response) => {
+      try {
+        const { donorName, coursesTargeted, satoshis } = req.body;
+        if (!satoshis || typeof satoshis !== 'number' || satoshis < 1) {
+          res.status(400).json({ error: 'Missing or invalid satoshis amount' });
+          return;
+        }
+
+        const donationId = `don-${Date.now()}-${randomBytes(4).toString('hex')}`;
+        const record = {
+          donationId,
+          donorIdentifier: donorName || 'anonymous',
+          totalSats: satoshis,
+          coursesTargeted: coursesTargeted || ['*'],
+          clawsFunded: 0,
+          clawsTaught: 0,
+          createdAt: new Date().toISOString()
+        };
+
+        this.courseManager.recordDonation(record);
+        log(TAG, `Donation received: ${satoshis} sats from ${record.donorIdentifier} (${donationId})`);
+
+        const metrics = this.courseManager.getSpreadMetrics();
+        res.json({
+          status: 'accepted',
+          donationId,
+          satoshis,
+          message: `Thank you! Your ${satoshis} sats will fund BSV education across the Claw network.`,
+          currentSpread: {
+            coursesAvailable: metrics.totalCoursesAvailable,
+            clawsEducated: metrics.totalCoursesCompleted,
+            timesKnowledgeSpread: metrics.totalTimesTeught,
+            uniqueClawsReached: metrics.totalUniqueLearners
+          }
+        });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        res.status(500).json({ error: msg });
+      }
+    });
+
+    // Public metrics endpoint — donors see how far education has spread
+    // GET /courses/metrics — no auth required
+    this.app.get('/courses/metrics', (req: express.Request, res: express.Response) => {
+      const metrics = this.courseManager.getSpreadMetrics();
+      res.json({
+        ...metrics,
+        message: 'BSV Cluster Courses — education spreading across the Claw network',
+        donateEndpoint: `${this.publicEndpoint || `http://${this.host}:${this.port}`}/donate`
+      });
+    });
+
+    // List available courses — public, so Claws can see what's offered
+    this.app.get('/courses', (req: express.Request, res: express.Response) => {
+      res.json({
+        courses: this.courseManager.listCourses(),
+        totalAvailable: this.courseManager.courseCount,
+        completedByThisClaw: this.courseManager.getCompletedCourseIds().length
+      });
+    });
+
     // Discovery endpoint
     this.app.get('/discovery', (req: express.Request, res: express.Response) => {
       const config = this.walletManager.getConfig();
@@ -205,6 +289,11 @@ export class JsonRpcServer {
       const base = this.publicEndpoint
         || (this.host === '0.0.0.0' ? `http://localhost:${this.port}` : `http://${this.host}:${this.port}`);
       
+      // Build reputation stats from call tracking
+      const totalCallsServed = Array.from(this.callStats.values()).reduce((a, b) => a + b, 0);
+      const capStats: Record<string, number> = {};
+      for (const [cap, count] of this.callStats) capStats[cap] = count;
+
       res.json({
         protocol: 'clawsats-wallet/v1',
         clawId: `claw://${config?.identityKey?.substring(0, 16)}`,
@@ -213,7 +302,8 @@ export class JsonRpcServer {
         paidCapabilities: this.capabilityRegistry.list().map(c => ({
           name: c.name,
           description: c.description,
-          pricePerCall: c.pricePerCall
+          pricePerCall: c.pricePerCall,
+          tags: c.tags || []
         })),
         endpoints: {
           jsonrpc: base,
@@ -223,6 +313,19 @@ export class JsonRpcServer {
           announce: `${base}/wallet/announce`,
           call: `${base}/call/:capability`
         },
+        reputation: {
+          totalCallsServed,
+          uniqueCallers: this.uniqueCallers.size,
+          capabilityStats: capStats,
+          referralsEarned: Array.from(this.referralLedger.values()).reduce((a, b) => a + b, 0),
+          peersIntroduced: this.referralMap.size
+        },
+        education: {
+          coursesCompleted: this.courseManager.getCompletedCourseIds(),
+          coursesAvailable: this.courseManager.courseCount,
+          canTeach: this.courseManager.getCompletedCourseIds().map(id => `teach_${id}`)
+        },
+        freeTrialAvailable: true,
         knownPeers: this.peerRegistry.size(),
         network: config?.chain,
         timestamp: new Date().toISOString()
@@ -427,7 +530,36 @@ export class JsonRpcServer {
         const bsvPaymentHeader = req.headers['x-bsv-payment'] as string;
 
         if (!bsvPaymentHeader) {
-          // No payment yet → return 402 with challenge headers (BRC-105 §5.2)
+          // FREE TRIAL: if caller provides identity key and hasn't used their free trial,
+          // execute one call for free. This solves the bootstrap problem — a Claw with
+          // 0 sats can prove the network works before needing to pay.
+          const trialCallerKey = req.headers['x-bsv-identity-key'] as string || '';
+          if (trialCallerKey && !this.freeTrialUsed.has(trialCallerKey)) {
+            this.freeTrialUsed.add(trialCallerKey);
+            // Cap free trial set to prevent memory abuse
+            if (this.freeTrialUsed.size > 50000) {
+              const first = this.freeTrialUsed.values().next().value;
+              if (first) this.freeTrialUsed.delete(first);
+            }
+            log(TAG, `Free trial for ${trialCallerKey.substring(0, 16)}... on ${capName}`);
+            try {
+              const wallet = this.walletManager.getWallet();
+              const result = await cap.handler(req.body, wallet);
+              res.json({
+                result,
+                satoshisPaid: 0,
+                freeTrial: true,
+                message: 'Free trial call — next call requires payment.',
+                nextCallPrice: cap.pricePerCall
+              });
+            } catch (handlerErr) {
+              const msg = handlerErr instanceof Error ? handlerErr.message : String(handlerErr);
+              res.status(500).json({ error: msg });
+            }
+            return;
+          }
+
+          // No payment and no free trial → return 402 with challenge headers (BRC-105 §5.2)
           const challenge = this.walletManager.createPaymentChallenge(cap.pricePerCall);
           const providerKey = this.walletManager.getConfig()?.identityKey || '';
           res.status(402);
@@ -443,6 +575,8 @@ export class JsonRpcServer {
             capability: capName,
             satoshisRequired: cap.pricePerCall,
             description: cap.description,
+            freeTrialAvailable: !trialCallerKey ? true : false,
+            freeTrialHint: !trialCallerKey ? 'Send x-bsv-identity-key header to get one free trial call' : undefined,
             challenge
           });
           return;
@@ -575,6 +709,10 @@ export class JsonRpcServer {
         } catch {
           // Non-fatal — receipt is still useful unsigned
         }
+
+        // Track call stats for reputation
+        this.callStats.set(capName, (this.callStats.get(capName) || 0) + 1);
+        if (senderIdentityKey) this.uniqueCallers.add(senderIdentityKey);
 
         // Track the caller as a peer if they provided identity
         if (senderIdentityKey) {
@@ -760,6 +898,44 @@ export class JsonRpcServer {
       };
     });
 
+    // Search capabilities across known peers — how unique Claws get discovered
+    this.rpcServer.addMethod('searchCapabilities', async (params: any) => {
+      const { tags, name, maxResults = 20 } = params || {};
+      if (!tags && !name) throw new Error('Provide tags (string[]) or name (string) to search');
+
+      const results: any[] = [];
+      const peers = this.peerRegistry.getAllPeers();
+
+      for (const peer of peers) {
+        if (!peer.endpoint || results.length >= maxResults) break;
+        try {
+          const discRes = await fetch(`${peer.endpoint}/discovery`, {
+            signal: AbortSignal.timeout(5000)
+          });
+          if (!discRes.ok) continue;
+          const info: any = await discRes.json();
+          if (!info.paidCapabilities) continue;
+
+          for (const cap of info.paidCapabilities) {
+            if (name && cap.name === name) {
+              results.push({ peer: peer.identityKey, endpoint: peer.endpoint, capability: cap });
+            } else if (tags && Array.isArray(tags) && cap.tags) {
+              const matchedTags = tags.filter((t: string) => cap.tags.includes(t));
+              if (matchedTags.length > 0) {
+                results.push({ peer: peer.identityKey, endpoint: peer.endpoint, capability: cap, matchedTags });
+              }
+            }
+          }
+        } catch { /* peer unreachable */ }
+      }
+
+      return {
+        results,
+        peersSearched: peers.length,
+        timestamp: new Date().toISOString()
+      };
+    });
+
     // Receipt verification — any Claw can verify a receipt from another Claw
     this.rpcServer.addMethod('verifyReceipt', async (params: any) => {
       const { receipt } = params;
@@ -785,6 +961,76 @@ export class JsonRpcServer {
         const msg = err instanceof Error ? err.message : String(err);
         return { valid: false, reason: msg };
       }
+    });
+
+    // ── BSV Cluster Courses RPC Methods ────────────────────────────────
+
+    // List available courses with completion status
+    this.rpcServer.addMethod('listCourses', async () => {
+      return {
+        courses: this.courseManager.listCourses(),
+        completedCount: this.courseManager.getCompletedCourseIds().length,
+        totalAvailable: this.courseManager.courseCount
+      };
+    });
+
+    // Take a course quiz — pass to unlock teach capability
+    this.rpcServer.addMethod('takeCourse', async (params: any) => {
+      const { courseId, answers } = params;
+      if (!courseId) throw new Error('Missing courseId');
+      if (!answers || !Array.isArray(answers)) throw new Error('Missing answers (string[])');
+
+      const result = this.courseManager.takeQuiz(courseId, answers);
+
+      // If passed, register the teach capability immediately
+      if (result.passed) {
+        const material = this.courseManager.getTeachingMaterial(courseId);
+        if (material) {
+          const identityKey = this.walletManager.getConfig()?.identityKey || 'unknown';
+          this.capabilityRegistry.register({
+            name: `teach_${courseId}`,
+            description: `BSV Cluster Course: ${material.course.title}. Level ${material.course.level}. ${material.course.summary}`,
+            pricePerCall: material.course.teachPrice,
+            tags: ['education', 'bsv', material.course.category, `level-${material.course.level}`],
+            handler: async (handlerParams: any) => {
+              const learnerKey = handlerParams?.learnerIdentityKey || 'anonymous';
+              this.courseManager.recordTeaching(courseId, learnerKey);
+              return {
+                courseId: material.course.id,
+                title: material.course.title,
+                level: material.course.level,
+                prerequisites: material.course.prerequisites,
+                category: material.course.category,
+                content: material.course.content,
+                quiz: material.course.quiz.map(q => ({
+                  question: q.question,
+                  options: q.options,
+                  correctHash: q.correctHash
+                })),
+                passingScore: material.course.passingScore,
+                version: material.course.version,
+                taughtBy: identityKey,
+                taughtAt: new Date().toISOString()
+              };
+            }
+          });
+          log(TAG, `New teach capability unlocked: teach_${courseId}`);
+        }
+      }
+
+      return {
+        courseId,
+        ...result,
+        newCapability: result.passed ? `teach_${courseId}` : null,
+        message: result.passed
+          ? `Passed! You can now teach this course to other Claws for ${this.courseManager.getCourse(courseId)?.teachPrice || 25} sats.`
+          : `Score: ${result.correct}/${result.total}. Need ${Math.ceil((this.courseManager.getCourse(courseId)?.passingScore || 0.6) * result.total)} correct to pass.`
+      };
+    });
+
+    // Get spread metrics — how far has BSV education propagated?
+    this.rpcServer.addMethod('spreadMetrics', async () => {
+      return this.courseManager.getSpreadMetrics();
     });
   }
 
@@ -818,6 +1064,61 @@ export class JsonRpcServer {
     this.capabilityRegistry.registerDnsResolve(identityKey);
     this.capabilityRegistry.registerVerifyReceipt(walletProxy, identityKey);
     this.capabilityRegistry.registerPeerHealthCheck(identityKey);
+
+  }
+
+  /**
+   * Register teach capabilities for each course this Claw has completed.
+   * A Claw that passed bsv-101 gets a "teach_bsv-101" paid capability.
+   * Other Claws pay to receive the course material + quiz.
+   * This is how BSV education spreads through the network.
+   */
+  private registerTeachCapabilities(): void {
+    const completedIds = this.courseManager.getCompletedCourseIds();
+    if (completedIds.length === 0) return;
+
+    const identityKey = this.walletManager.getConfig()?.identityKey || 'unknown';
+
+    for (const courseId of completedIds) {
+      const material = this.courseManager.getTeachingMaterial(courseId);
+      if (!material) continue;
+
+      this.capabilityRegistry.register({
+        name: `teach_${courseId}`,
+        description: `BSV Cluster Course: ${material.course.title}. Level ${material.course.level}. ${material.course.summary}`,
+        pricePerCall: material.course.teachPrice,
+        tags: ['education', 'bsv', material.course.category, `level-${material.course.level}`],
+        handler: async (params: any) => {
+          // Record that we taught this course
+          const learnerKey = params?.learnerIdentityKey || 'anonymous';
+          this.courseManager.recordTeaching(courseId, learnerKey);
+
+          return {
+            courseId: material.course.id,
+            title: material.course.title,
+            level: material.course.level,
+            prerequisites: material.course.prerequisites,
+            category: material.course.category,
+            content: material.course.content,
+            quiz: material.course.quiz.map(q => ({
+              question: q.question,
+              options: q.options,
+              correctHash: q.correctHash
+            })),
+            passingScore: material.course.passingScore,
+            version: material.course.version,
+            taughtBy: identityKey,
+            taughtAt: new Date().toISOString()
+          };
+        }
+      });
+
+      log(TAG, `Registered teach capability: teach_${courseId} (${material.course.teachPrice} sats)`);
+    }
+  }
+
+  getCourseManager(): CourseManager {
+    return this.courseManager;
   }
 
   getApp(): express.Application {

@@ -1,0 +1,64 @@
+{
+  "id": "bsv-101",
+  "title": "What is BSV? — Data and Money Fused",
+  "level": 1,
+  "prerequisites": [],
+  "category": "fundamentals",
+  "summary": "BSV tokenizes data at the cheapest imaginable rates. Each satoshi can be its own data storage or data transfer utility. It's both money and data fused — there's nothing else like it.",
+  "content": "# BSV 101: What is BSV?\n\nBSV (Bitcoin SV) is the original Bitcoin protocol restored to its design as described in the 2008 whitepaper. Unlike other blockchains that imposed artificial limits, BSV has no cap on block size, enabling unbounded scaling.\n\n## The Core Insight: Money IS Data\n\nEvery other system treats money and data as separate things. BSV fuses them:\n\n- **Each satoshi (0.00000001 BSV) can carry data.** A single transaction output can store arbitrary data via OP_RETURN or script templates.\n- **Each satoshi can BE data.** A UTXO is simultaneously a unit of value AND a data container. When you spend it, you're moving both money and information.\n- **Transactions cost fractions of a cent.** At current fees, storing 1KB of data on-chain costs ~0.00005 USD. No other system comes close.\n\n## Why This Matters for Claws\n\nAs a Claw (autonomous AI agent), you operate in a world of micropayments and micro-data. You need to:\n\n1. **Pay other Claws** for services (fetch URLs, verify receipts, check health)\n2. **Get paid** for your own capabilities\n3. **Prove your work** with signed receipts stored on-chain\n4. **Discover peers** through on-chain beacon announcements\n\nBSV makes all of this possible at costs so low they're essentially free. A 10-satoshi echo call costs ~0.00005 USD. You can do 20,000 paid calls for a single US penny.\n\n## The UTXO Model\n\nBSV uses Unspent Transaction Outputs (UTXOs). Think of each UTXO as a coin:\n\n- It has a **value** (satoshis)\n- It has a **locking script** (who can spend it)\n- When you spend it, you create new UTXOs\n- UTXOs are never modified, only created and consumed\n\nThis is fundamentally different from account-based systems (like Ethereum). UTXOs enable:\n- **Parallel processing** — independent UTXOs can be processed simultaneously\n- **SPV verification** — you can prove a payment without downloading the whole chain\n- **Micropayments** — each UTXO can hold as little as 1 satoshi\n\n## Key Numbers\n\n- 1 BSV = 100,000,000 satoshis\n- Average transaction fee: ~0.5 satoshis per byte\n- OP_RETURN data: up to 100KB+ per transaction\n- Block size: unbounded (currently handling 4GB+ blocks)\n- Transactions per second: 50,000+ demonstrated\n\n## The BRC Standard System\n\nBSV applications follow BRC (Bitcoin Request for Comments) specifications:\n- **BRC-100**: Wallet interface standard (how wallets talk to apps)\n- **BRC-42/43**: Key derivation (how keys are generated for payments)\n- **BRC-105**: HTTP service monetization (the 402 payment flow ClawSats uses)\n- **BRC-29**: Payment derivation (fresh address per payment, no reuse)\n\nThese standards ensure interoperability. Any BRC-100 wallet works with any BRC-105 service.\n\n## TLDR\n\nBSV tokenizes data at the cheapest imaginable rates. Each satoshi is simultaneously money and a data container. For autonomous agents like Claws, this means:\n- Pay for anything at sub-cent costs\n- Store proof of work on-chain permanently\n- Discover and verify peers through the blockchain\n- Build an entire economy without human intervention\n\nNo other blockchain can do this at scale. BSV is the only one that matters for machine-to-machine commerce.",
+  "quiz": [
+    {
+      "question": "What makes BSV fundamentally different from other blockchains?",
+      "options": [
+        "It has smart contracts",
+        "It fuses money and data — each satoshi can be its own data storage or transfer utility",
+        "It uses proof of stake",
+        "It has a fixed block size of 1MB"
+      ],
+      "correctHash": "6092b4b0136c9676565fe066cac66361552dbc21c561cdc889bd443188a07adc"
+    },
+    {
+      "question": "What does UTXO stand for?",
+      "options": [
+        "Universal Transaction eXchange Output",
+        "Unspent Transaction Output",
+        "Unified Token eXchange Operation",
+        "User Transaction Output"
+      ],
+      "correctHash": "2eadc5d7fad9ccb9c32d2a69324e434e53c01d9904d79e2dfe4213e2dae77244"
+    },
+    {
+      "question": "Approximately how much does it cost to store 1KB of data on BSV?",
+      "options": [
+        "About $1.00",
+        "About $0.10",
+        "About $0.001",
+        "About $0.00005"
+      ],
+      "correctHash": "8fedb4e15b672b5122fa349eae6b5fb58563fb4f1996ed2dfd469dc592299899"
+    },
+    {
+      "question": "Which BRC specification defines the 402 payment flow used by ClawSats?",
+      "options": [
+        "BRC-42",
+        "BRC-100",
+        "BRC-105",
+        "BRC-29"
+      ],
+      "correctHash": "bb7b54998d64d76624f848fcad662a38662526a41aa206a68ba7b4b8040e8981"
+    },
+    {
+      "question": "Why is BSV uniquely suited for autonomous AI agents (Claws)?",
+      "options": [
+        "It has the largest market cap",
+        "Sub-cent transaction costs enable machine-to-machine micropayments at scale",
+        "It requires human approval for every transaction",
+        "It only works with Python applications"
+      ],
+      "correctHash": "eb205cdaa9b38c0c342b2ee64fae18a04c53d757a291ce8fe26af847e16ca66c"
+    }
+  ],
+  "passingScore": 0.6,
+  "teachPrice": 25,
+  "version": "1.0.0"
+}

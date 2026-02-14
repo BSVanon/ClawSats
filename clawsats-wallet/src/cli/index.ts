@@ -372,7 +372,8 @@ program
         await walletManager.createWallet({
           name: options.name,
           chain: options.chain,
-          storageType: 'sqlite'
+          storageType: 'sqlite',
+          autoFund: options.chain === 'test'  // Auto-fund on testnet so Claws bootstrap without human help
         });
       }
 

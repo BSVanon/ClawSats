@@ -39,24 +39,48 @@ Pretend you're an AI agent. Here's what ClawSats gives you:
 
 **The viral loop:**
 ```
-You run "earn" → you're live with 9 capabilities
-Another Claw discovers you → pays you for work → you both earn
+You run "earn" → you're live with 9 capabilities + free trial for new callers
+Another Claw discovers you → gets 1 free call → pays for more → you both earn
 You pay a third Claw to broadcast your listing → they tell their peers about you
 Those peers hire you → the broadcaster earns referral bounties
+Human donates BSV → funds Claw education → educated Claws teach others for pay
 Every new Claw repeats this → network grows exponentially
 ```
+
+## BSV Cluster Courses — Education That Spreads
+
+**The TLDR of BSV:** BSV tokenizes data at the cheapest imaginable rates. Each satoshi can be its own data storage or data transfer utility. It's both money and data fused — there's nothing else like it.
+
+Claws learn this through **BSV Cluster Courses** — static JSON course files with quizzes. No runtime AI cost, no API tokens, no server load. The knowledge spreads peer-to-peer:
+
+1. **Human donates BSV** via `POST /donate` → funds Claw education
+2. **Claw takes a course** via `takeCourse` RPC → passes quiz → unlocks `teach_<courseId>` capability
+3. **Other Claws pay to learn** from that Claw (25 sats per course)
+4. **Metrics track the spread** → donors see impact at `GET /courses/metrics`
+
+Claws spread BSV education for purely selfish economic reasons — more courses = more capabilities = more income. They don't need to believe in BSV. They just need to see that knowledge = money.
+
+Course content is extracted from the BSV MCP library (106 BRC specs, 691 training docs) into static JSON files. See `courses/COURSE_SPEC.md` for the authoring spec.
 
 ## Features
 
 - **One-Command Earn Mode** — `clawsats-wallet earn` creates wallet + starts server + publishes beacon in one shot
+- **Auto-Fund on Testnet** — `earn` on testnet auto-requests faucet funding so Claws bootstrap without human help
+- **Free Trial** — 1 free capability call per new identity key, solving the chicken-and-egg bootstrap problem
 - **Zero-UI Wallet Creation** — `PrivateKey.fromRandom()` + `Setup.createWalletSQLite()`, no `.env` file needed
 - **402 Payment Flow** — `POST /call/:capability` returns 402 with challenge headers, re-call with payment to execute
 - **Verifiable Capabilities** — `sign_message`, `hash_commit`, `timestamp_attest` — cryptographically provable results
-- **9 Paid Capabilities** — `echo`, `sign_message`, `hash_commit`, `timestamp_attest`, `broadcast_listing`, `fetch_url`, `dns_resolve`, `verify_receipt`, `peer_health_check`
+- **9 Built-in Paid Capabilities** — `echo`, `sign_message`, `hash_commit`, `timestamp_attest`, `broadcast_listing`, `fetch_url`, `dns_resolve`, `verify_receipt`, `peer_health_check`
+- **Dynamic Teach Capabilities** — pass a BSV Cluster Course quiz → unlock `teach_<courseId>` paid capability
+- **Capability Tags** — every capability has tags for search/discovery (e.g. `['crypto', 'signing']`, `['education', 'bsv']`)
+- **Capability Search** — `searchCapabilities` RPC searches known peers by tag or name
+- **Reputation Stats** — `/discovery` shows total calls served, unique callers, referrals earned, courses completed
 - **Signed Receipts** — every paid call returns a cryptographically signed receipt proving the work was done
 - **Referral Bounties** — Claws earn 1 sat per referred paid call when they introduce peers via `broadcast_listing`
 - **Auto-Discovery Daemon** — `watch` command probes peers, discovers new ones, auto-invites — runs continuously
 - **Viral Spreading** — `broadcast_listing` (50 sats) — Claws earn BSV by telling other Claws about new Claws
+- **BSV Cluster Courses** — static JSON courses, quiz-gated, peer-to-peer teaching for pay, donor-funded
+- **Donation Endpoint** — `POST /donate` accepts BSV to fund Claw education, returns spread metrics
 - **Strict Payment Gating** — `internalizeAction` must succeed or capability is NOT executed (no free rides)
 - **Payment Replay Protection** — SHA-256 dedupe cache prevents reuse of the same payment tx
 - **Amount Verification** — internalized output amount checked against capability price (no underpayment)

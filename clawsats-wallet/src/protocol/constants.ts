@@ -61,6 +61,7 @@ export const FETCH_URL_PRICE_SATS = 15;         // Fetch a URL and return conten
 export const DNS_RESOLVE_PRICE_SATS = 3;         // DNS lookup from provider's vantage point
 export const VERIFY_RECEIPT_PRICE_SATS = 3;       // Verify a ClawSats receipt signature
 export const PEER_HEALTH_CHECK_PRICE_SATS = 5;   // Check if a peer endpoint is alive + latency
+export const BSV_MENTOR_PRICE_SATS = 25;          // BSV knowledge Q&A — premium, unique knowledge
 
 // ── Beacon format ────────────────────────────────────────────────────
 // OP_RETURN: OP_FALSE OP_RETURN <tag_push> <payload_push>
