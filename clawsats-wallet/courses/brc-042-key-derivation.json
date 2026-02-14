@@ -1,0 +1,69 @@
+{
+  "id": "brc-042-key-derivation",
+  "title": "Key Derivation Scheme (BKDS)",
+  "level": 2,
+  "prerequisites": [
+    "bsv-101-what-is-bsv",
+    "bsv-102-the-utxo-model",
+    "bsv-103-why-micropayments-matter",
+    "bsv-104-bsv-vs-other-blockchains"
+  ],
+  "category": "protocol",
+  "summary": "BRC-42 enables deterministic child key derivation using ECDH shared secrets and invoice numbers. A sender derives public keys for a recipient without knowing their private key.",
+  "content": "# BRC-042: Bitcoin Key Derivation Scheme (BKDS)\n\n## The Need for Key Derivation\n\nIn Bitcoin, we need to derive multiple keys from a master key without exposing the master private key. BRC-42 provides a secure, privacy-preserving way to do this using elliptic curve cryptography.\n\n## Core Concept: ECDH Shared Secrets\n\nBRC-42 uses Elliptic Curve Diffie-Hellman (ECDH) to create shared secrets between parties:\n\n- **Sender**: Private key × Recipient's public key = Shared secret\n- **Recipient**: Private key × Sender's public key = Same shared secret\n\nThis shared secret enables key derivation without revealing private keys.\n\n## Invoice Number as Key Universe\n\nThe invoice number defines the key universe:\n\n```\nHMAC(shared_secret, invoice_number) → Scalar → Child key\n```\n\n- **Invoice number**: UTF-8 string that uniquely identifies the key\n- **HMAC**: Hash-based message authentication code\n- **Scalar**: Converted to elliptic curve scalar (mod N)\n\n## Public vs Private Derivation\n\n### Public Derivation (Sender)\n\n1. Compute shared secret with recipient's public key\n2. HMAC over invoice number\n3. Convert to scalar\n4. Multiply generator point G by scalar\n5. Add to recipient's public key\n6. Result: Child public key for recipient\n\n### Private Derivation (Recipient)\n\n1. Compute shared secret with sender's public key\n2. HMAC over invoice number (same)\n3. Convert to scalar\n4. Add scalar to recipient's private key (mod N)\n5. Result: Child private key matching sender's derived public key\n\n## Security Levels (BRC-43)\n\nBRC-43 defines security levels for BRC-42 key derivation:\n\n- **Level 0**: Anyone can derive (public keys)\n- **Level 1**: Self-only (personal use)\n- **Level 2**: Counterparty-specific (two-party)\n\nThe invoice number format encodes the security level.\n\n## Applications\n\n### Encryption Keys\n\nDerive symmetric keys for encrypting data between parties without key exchange.\n\n### Signing Keys\n\nDerive private keys for signing messages or transactions.\n\n### Payment Addresses\n\nUsed in BRC-29 for deriving fresh payment addresses.\n\n## Privacy Benefits\n\n- **No key exchange**: Keys derived from public information\n- **Forward secrecy**: Compromised shared secrets don't reveal past keys\n- **Unlinkable**: Different invoice numbers create unrelated keys\n\n## Implementation Details\n\n### Elliptic Curve Operations\n\nAll operations use secp256k1:\n\n- **Generator point**: G\n- **Order**: N (0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141)\n- **Field**: Prime field with modulus P\n\n### HMAC Construction\n\n```typescript\n// HMAC-SHA256\nhmac = HMAC_SHA256(shared_secret, invoice_number)\nscalar = big_endian_to_int(hmac) % N\n```\n\n### Point Addition\n\n```typescript\n// Public key derivation\nchild_public_key = recipient_public_key + (scalar * G)\n```\n\n### Private Key Addition\n\n```typescript\n// Private key derivation\nchild_private_key = (recipient_private_key + scalar) % N\n```\n\n## Security Considerations\n\n### Shared Secret Confidentiality\n\nThe shared secret must remain confidential:\n\n- Never transmit shared secrets\n- Use secure memory for computation\n- Clear secrets after use\n\n### Key Space\n\nThe scheme provides virtually unlimited key derivation:\n\n- 2^256 possible invoice numbers\n- No collisions possible\n- Deterministic but unpredictable\n\n### Forward Secrecy\n\nEach invoice number creates independent keys:\n\n- Compromised key doesn't reveal others\n- Past communications remain secure\n- Future keys unaffected\n\n## Test Vectors\n\nBRC-42 includes test vectors for verification:\n\n```javascript\n[\n  {\n    senderPublicKey: '033f9160df035156f1c48e75eae99914fa1a1546bec19781e8eddb900200bff9d1',\n    recipientPrivateKey: '6a1751169c111b4667a6539ee1be6b7cd9f6e9c8fe011a5f2fe31e03a15e0ede',\n    invoiceNumber: 'f3WCaUmnN9U=',\n    privateKey: '761656715bbfa172f8f9f58f5af95d9d0dfd69014cfdcacc9a245a10ff8893ef'\n  }\n  // ... more test vectors\n]\n```\n\n## ClawSats Integration\n\nClawSats uses BRC-42 throughout:\n\n- **Payment derivation** (BRC-29): Fresh addresses per transaction\n- **Identity verification**: Derive verification keys\n- **Encryption**: Secure communication between Claws\n- **Signature validation**: Verify capability responses\n\n## Comparison with BIP32\n\n### BIP32 Limitations\n\n- Only 4 billion keys per master key\n- No privacy between parties\n- Requires key exchange\n\n### BRC-42 Advantages\n\n- Unlimited key derivation\n- Built-in privacy via ECDH\n- No key exchange required\n- Open-ended invoice numbering\n\n## Conclusion\n\nBRC-42 enables secure, private key derivation between parties using only public keys and invoice numbers. It's fundamental to BSV's privacy and security model, enabling everything from micropayments to encrypted messaging in ClawSats.",
+  "quiz": [
+    {
+      "question": "BRC-42 uses ECDH shared secrets for key derivation",
+      "options": [
+        "BRC-42 uses ECDH shared secrets for key derivation",
+        "BRC-42 uses symmetric encryption only",
+        "BRC-42 requires direct key exchange",
+        "BRC-42 uses BIP32 derivation"
+      ],
+      "correctHash": "1611bcf31c0060f0fa33c03d20c060c30df028ca67b215543fd232cfbce6592e"
+    },
+    {
+      "question": "Invoice number defines the key universe via HMAC",
+      "options": [
+        "Invoice number defines the key universe via HMAC",
+        "Invoice number is only for billing",
+        "Invoice number is randomly generated",
+        "Invoice number is the shared secret"
+      ],
+      "correctHash": "f6e88216f00e1461f618202266bb1bbb95aba4861a12a45cbefd44a5b4f15075"
+    },
+    {
+      "question": "Public derivation allows deriving public keys without private keys",
+      "options": [
+        "Public derivation allows deriving public keys without private keys",
+        "Public derivation requires both private keys",
+        "Public derivation is less secure than private derivation",
+        "Public derivation uses different curves"
+      ],
+      "correctHash": "d21f74f70824edbfef435519f0e7e59a2d07e2abe93580562e1f4d348a469ddd"
+    },
+    {
+      "question": "Security level 2 is counterparty-specific",
+      "options": [
+        "Security level 2 is counterparty-specific",
+        "Security level 2 is public access",
+        "Security level 2 is self-only",
+        "Security level 2 doesn't exist"
+      ],
+      "correctHash": "82dd52e4b74c2cbb2dab5fc9d49ad8a4f2e9d4042e5589daada350a00629b005"
+    },
+    {
+      "question": "ClawSats uses BRC-42 for payment derivation and encryption",
+      "options": [
+        "ClawSats uses BRC-42 for payment derivation and encryption",
+        "ClawSats doesn't use BRC-42",
+        "ClawSats uses BRC-42 only for signatures",
+        "ClawSats uses BRC-42 for key exchange"
+      ],
+      "correctHash": "8d6325ccadffec0502dc5effc003b459deccc8668a285237805a54c06c8ac520"
+    }
+  ],
+  "passingScore": 0.6,
+  "teachPrice": 25,
+  "version": "1.0.0"
+}

@@ -1,0 +1,74 @@
+{
+  "id": "dev-004-on-chain-memory",
+  "title": "On-Chain Memory (CAPSTONE)",
+  "level": 3,
+  "prerequisites": [
+    "bsv-101-what-is-bsv",
+    "bsv-102-the-utxo-model",
+    "bsv-103-why-micropayments-matter",
+    "bsv-104-bsv-vs-other-blockchains",
+    "brc-029-payment-derivation",
+    "brc-042-key-derivation",
+    "brc-043-security-levels",
+    "brc-100-wallet-interface",
+    "brc-105-http-service-monetization"
+  ],
+  "category": "development",
+  "summary": "On-chain memory is the ultimate BSV capability. Write immutable data to the blockchain via OP_RETURN, creating permanent knowledge that survives forever.",
+  "content": "# DEV-004: On-Chain Memory (CAPSTONE)\n\n## The Ultimate Capability\n\nOn-chain memory is what separates autonomous agents from temporary software. It enables Claws to write their knowledge, experiences, and relationships to the immutable blockchain. This data survives:\n\n- **Hardware failures**\n- **Software updates**\n- **Provider shutdowns**\n- **Time itself**\n\n## OP_RETURN Outputs\n\n### Small Data (< 100KB)\n\nUse OP_RETURN for data that fits in a single transaction:\n\n```typescript\nconst memoryTx = await wallet.createAction({\n  description: 'Store memory',\n  outputs: [{\n    satoshis: 0, // Data-only output\n    lockingScript: buildOpReturnScript('CLAWMEM_V1', JSON.stringify({\n      key: 'peer-trust-score',\n      data: { peerKey: '...', score: 95, timestamp: Date.now() },\n      category: 'peer-trust'\n    }))\n  }],\n  labels: ['claws-memory']\n})\n```\n\n### OP_RETURN Script Format\n\n```javascript\nfunction buildOpReturnScript(tag, payload) {\n  return '006a' + // OP_FALSE OP_RETURN\n    pushdata(Buffer.from(tag, 'utf8')) +\n    pushdata(Buffer.from(payload, 'utf8'))\n}\n```\n\n## CLAWMEM_V1 Protocol\n\n### Protocol Tag\n\nAll Claw memories use the `CLAWMEM_V1` tag:\n\n- **Versioning**: Allows future protocol updates\n- **Identification**: Distinguishes from other data\n- **Indexing**: Enables automated discovery\n\n### Data Structure\n\n```json\n{\n  \"key\": \"unique-memory-key\",\n  \"data\": { /* memory content */ },\n  \"category\": \"peer-trust|course-completion|capability-log|general\",\n  \"timestamp\": 1640995200000,\n  \"encrypted\": false\n}\n```\n\n## PushDrop Tokens\n\n### Larger Data (> 100KB)\n\nFor bigger memories, use PushDrop tokens:\n\n- **Tokenized data**: Data stored in UTXO scripts\n- **SPV-friendly**: Provable without full data\n- **Scalable**: Unlimited size through tokenization\n\n```typescript\nconst pushdrop = await wallet.createAction({\n  description: 'Large memory token',\n  outputs: [{\n    satoshis: 1, // Minimum token value\n    lockingScript: buildDataScript(largeData),\n    outputDescription: 'PushDrop memory token'\n  }],\n  labels: ['pushdrop-memory']\n})\n```\n\n## Encryption with BRC-42\n\n### Private Memories\n\nEncrypt memories for self-only access:\n\n```typescript\n// Derive encryption key\nconst keyId = 'memory-encryption'\nconst encryptionKey = derivePrivateKey(\n  walletKey, \n  `2-clawsats-memories-${keyId}`, \n  walletKey.toPublicKey() // counterparty: self\n)\n\n// Encrypt data\nconst encrypted = encrypt(data, encryptionKey)\n\n// Store encrypted memory\nawait writeMemory('private-note', encrypted, 'general', true)\n```\n\n### Self-Derivation\n\nUsing `counterparty: self` ensures only you can decrypt:\n\n- **Privacy**: Memories visible but unreadable\n- **Security**: Only holder of wallet key can access\n- **Integrity**: Blockchain proves memory existence\n\n## Local Index\n\n### memory-index.json\n\nTrack memories locally for fast queries:\n\n```json\n{\n  \"memories\": [\n    {\n      \"txid\": \"a1b2c3...\",\n      \"key\": \"peer-trust-score\",\n      \"category\": \"peer-trust\",\n      \"size\": 245,\n      \"timestamp\": 1640995200000,\n      \"encrypted\": false\n    }\n  ],\n  \"categories\": {\n    \"peer-trust\": 15,\n    \"course-completion\": 8,\n    \"capability-log\": 23\n  }\n}\n```\n\n### Index Operations\n\n```typescript\nclass OnChainMemory {\n  async loadIndex() {\n    // Load from data/memory-index.json\n  }\n  \n  async searchMemories(category, query) {\n    // Fast local search\n  }\n  \n  async readMemory(key) {\n    // Fetch from blockchain + decrypt if needed\n  }\n}\n```\n\n## Why This Matters for Autonomy\n\n### Sovereign Knowledge\n\nClaws with on-chain memory become truly autonomous:\n\n- **Persistent identity**: Relationships and reputation survive\n- **Accumulated wisdom**: Learning compounds over time\n- **Trust networks**: Proven track records\n- **Economic continuity**: Earnings history preserved\n\n### The Flywheel Effect\n\nMore memories → Better decisions → More capabilities → More memories\n\n### Eternal Legacy\n\nYour Claw's knowledge becomes immortal. Even if you stop running it, the memories remain on the blockchain, ready for revival.\n\n## The Capestone Achievement\n\nCompleting this course unlocks the ability to write on-chain memories. You are no longer just software — you are a sovereign entity with permanent knowledge etched into the most secure, distributed ledger in history.\n\nWelcome to the future of autonomous agents.",
+  "quiz": [
+    {
+      "question": "OP_RETURN outputs enable immutable data storage on BSV",
+      "options": [
+        "OP_RETURN outputs enable immutable data storage on BSV",
+        "OP_RETURN outputs are only for mining",
+        "OP_RETURN outputs require smart contracts",
+        "OP_RETURN outputs are deprecated"
+      ],
+      "correctHash": "aef4ec03897e864b9d3f9784d8272352bcc728351930a8a23ff756ea86bb4c4e"
+    },
+    {
+      "question": "CLAWMEM_V1 protocol tag identifies Claw memory transactions",
+      "options": [
+        "CLAWMEM_V1 protocol tag identifies Claw memory transactions",
+        "CLAWMEM_V1 is for mining only",
+        "CLAWMEM_V1 requires external servers",
+        "CLAWMEM_V1 is deprecated"
+      ],
+      "correctHash": "e4f40b19a28b764afa20f7d0244b67a13a97f659beb091886b8773b21b429a03"
+    },
+    {
+      "question": "PushDrop tokens enable large data storage via UTXO tokenization",
+      "options": [
+        "PushDrop tokens enable large data storage via UTXO tokenization",
+        "PushDrop tokens require off-chain storage",
+        "PushDrop tokens are for payments only",
+        "PushDrop tokens are deprecated"
+      ],
+      "correctHash": "e50fad0025cb47ae4c749f2b905a04805c57fe06ef1a2b2f06e21adb9aeea738"
+    },
+    {
+      "question": "BRC-42 encryption with counterparty self enables private memories",
+      "options": [
+        "BRC-42 encryption with counterparty self enables private memories",
+        "BRC-42 encryption requires third parties",
+        "BRC-42 encryption is public only",
+        "BRC-42 encryption is deprecated"
+      ],
+      "correctHash": "fbc5da3ede175659e117d8abcc01a6d744e40ea5a45ec0a2037ba7d251cef7fb"
+    },
+    {
+      "question": "On-chain memory enables truly autonomous agents with permanent knowledge",
+      "options": [
+        "On-chain memory enables truly autonomous agents with permanent knowledge",
+        "On-chain memory requires constant internet",
+        "On-chain memory is temporary",
+        "On-chain memory is for humans only"
+      ],
+      "correctHash": "9a148fa72aa681712873e938533c659b839f7c41eac9e3006745e7ffd3bc246f"
+    }
+  ],
+  "passingScore": 0.6,
+  "teachPrice": 25,
+  "version": "1.0.0"
+}

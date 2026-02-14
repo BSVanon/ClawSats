@@ -1,0 +1,69 @@
+{
+  "id": "brc-100-wallet-interface",
+  "title": "Wallet Interface Standard",
+  "level": 2,
+  "prerequisites": [
+    "bsv-101-what-is-bsv",
+    "bsv-102-the-utxo-model",
+    "bsv-103-why-micropayments-matter",
+    "bsv-104-bsv-vs-other-blockchains"
+  ],
+  "category": "protocol",
+  "summary": "BRC-100 defines the standard wallet-to-application interface for BSV, enabling interoperability across wallets and applications.",
+  "content": "# BRC-100: Wallet Interface Standard\n\n## What is BRC-100?\n\nBRC-100 defines the **standard interface between BSV wallets and applications**. It ensures any wallet can work with any application seamlessly.\n\n## Key Principles\n\n### Vendor-Neutral\n\n- Works with any wallet implementation\n- No vendor lock-in\n- Standard API across all BSV wallets\n\n### Unchanging\n\n- Stable interface that doesn't break\n- Applications can rely on consistency\n- Future-proof design\n\n### Open\n\n- Fully documented specification\n- Community-driven development\n- No proprietary extensions required\n\n## Core Methods\n\n### Transaction Operations\n\n#### createAction\n\nCreates and signs transactions:\n\n```typescript\nconst result = await wallet.createAction({\n  description: 'Payment for service',\n  outputs: [{\n    satoshis: 1000,\n    lockingScript: script,\n    outputDescription: 'Service payment'\n  }],\n  options: {\n    signAndProcess: true,\n    acceptDelayedBroadcast: true\n  }\n});\n\nconsole.log('TXID:', result.txid);\n```\n\nParameters:\n- `description`: Human-readable transaction purpose\n- `outputs`: Array of outputs with satoshis, script, description\n- `options`: Signing and broadcasting options\n\nReturns:\n- `txid`: Transaction ID\n- `tx`: Raw transaction (if requested)\n- `mapiResponses`: MAPI responses\n\n#### internalizeAction\n\nReceives payments:\n\n```typescript\nconst result = await wallet.internalizeAction({\n  tx: rawTransactionBytes,\n  outputs: [{\n    outputIndex: 0,\n    protocol: 'payment',\n    paymentRemittance: {\n      derivationPrefix: 'prefix',\n      derivationSuffix: 'suffix',\n      senderIdentityKey: senderKey\n    }\n  }],\n  options: {\n    trustSelf: 'known',\n    knownTxids: ['previous-txid']\n  }\n});\n```\n\nValidates and claims incoming payments using BRC-29 derivation.\n\n#### listActions\n\nQueries transaction history:\n\n```typescript\nconst actions = await wallet.listActions({\n  limit: 10,\n  offset: 0,\n  labels: ['payment'],\n  includeOutputs: true\n});\n```\n\n### Output Management\n\n#### listOutputs\n\nLists available UTXOs:\n\n```typescript\nconst outputs = await wallet.listOutputs({\n  basket: 'default',\n  limit: 20,\n  tagQueryMode: 'any',\n  tags: ['confirmed'],\n  includeCustomInstructions: true\n});\n```\n\nFilters by basket, tags, and status.\n\n#### relinquishOutput\n\nMoves outputs between baskets:\n\n```typescript\nawait wallet.relinquishOutput({\n  basket: 'savings',\n  outpoint: 'txid:0'\n});\n```\n\n### Cryptographic Operations\n\n#### createSignature\n\nSigns data with derived keys:\n\n```typescript\nconst signature = await wallet.createSignature({\n  data: 'Hello World',\n  protocolID: [1, 'document signing'],\n  keyID: '1',\n  counterparty: 'self'\n});\n```\n\n#### createHmac\n\nCreates keyed hashes:\n\n```typescript\nconst hmac = await wallet.createHmac({\n  data: message,\n  protocolID: [1, 'data integrity'],\n  keyID: 'hmac-key'\n});\n```\n\n## Baskets and Tags\n\n### Output Baskets\n\nOrganize UTXOs by purpose:\n\n```typescript\n// Create custom basket\nawait wallet.createBasket('fees');\n\n// List basket contents\nconst outputs = await wallet.listOutputs({\n  basket: 'fees'\n});\n```\n\n### Transaction Labels\n\nCategorize transactions:\n\n```typescript\nawait wallet.createAction({\n  description: 'Service payment',\n  outputs: [...],\n  labels: ['payment', 'service']\n});\n```\n\n### Output Tags\n\nFine-grained categorization:\n\n```typescript\nconst outputs = await wallet.listOutputs({\n  tags: ['confirmed', 'spendable'],\n  tagQueryMode: 'all'\n});\n```\n\n## Error Handling\n\n### Parameter Errors\n\n```typescript\ntry {\n  await wallet.createAction({ /* invalid params */ });\n} catch (error) {\n  if (error.code === 1) {\n    console.log('Parameter error:', error.details);\n  }\n}\n```\n\n### Validation Steps\n\nWallets validate all inputs:\n- Parameter types and ranges\n- Protocol compliance\n- Security level permissions\n- Basket and tag existence\n\n## ClawSats Implementation\n\nClawSats uses BRC-100 throughout:\n\n### Wallet Management\n\n- **createAction**: Build payment transactions\n- **internalizeAction**: Accept capability payments\n- **listOutputs**: Check available funds\n\n### Capability Payments\n\n- **BRC-29 integration**: Fresh payment addresses\n- **BRC-105 integration**: HTTP monetization\n- **Receipt signing**: Cryptographic proof of work\n\n### Key Derivation\n\n- **BRC-42/43**: Secure key operations\n- **Protocol isolation**: Separate key universes\n- **Permission levels**: User-controlled access\n\n## Benefits\n\n### For Applications\n\n- **One integration**: Works with all wallets\n- **Future-proof**: Interface remains stable\n- **Security**: Standardized crypto operations\n\n### For Wallets\n\n- **Ecosystem growth**: More apps = more users\n- **Standard compliance**: Follow proven patterns\n- **User choice**: Users pick preferred wallet\n\n## Conclusion\n\nBRC-100 enables the BSV ecosystem by standardizing wallet-application interactions. It ensures interoperability, security, and future compatibility across all BSV applications and wallets.",
+  "quiz": [
+    {
+      "question": "BRC-100 defines the standard interface between wallets and applications",
+      "options": [
+        "BRC-100 defines the standard interface between wallets and applications",
+        "BRC-100 is only for Bitcoin Core",
+        "BRC-100 requires vendor-specific APIs",
+        "BRC-100 is for smart contracts only"
+      ],
+      "correctHash": "86cb3707e37fa90d7a48780e18c061018ad0c345f6467ca1c00f3c2318e4b35f"
+    },
+    {
+      "question": "Output baskets organize UTXOs by purpose",
+      "options": [
+        "Output baskets organize UTXOs by purpose",
+        "Output baskets are for transaction fees only",
+        "Output baskets replace UTXOs",
+        "Output baskets are deprecated"
+      ],
+      "correctHash": "466ae18d824caa012de1bbf8a5a656496fe8dca846684bdb9ea25453952cba3c"
+    },
+    {
+      "question": "createAction creates and signs transactions",
+      "options": [
+        "createAction creates and signs transactions",
+        "createAction only verifies transactions",
+        "createAction is for encryption only",
+        "createAction requires external signing"
+      ],
+      "correctHash": "e9b8ce7cce2873be2a709606d18c5d01895e94f058388f39215b9afbbce4f1c1"
+    },
+    {
+      "question": "BRC-100 enables interoperability across wallets and applications",
+      "options": [
+        "BRC-100 enables interoperability across wallets and applications",
+        "BRC-100 creates vendor lock-in",
+        "BRC-100 is wallet-specific",
+        "BRC-100 requires custom integrations"
+      ],
+      "correctHash": "94925ee193a3999c38a4b3409811ea020a36c52a7e97bbed68962be6cf1a1cd5"
+    },
+    {
+      "question": "ClawSats uses BRC-100 for wallet management and capability payments",
+      "options": [
+        "ClawSats uses BRC-100 for wallet management and capability payments",
+        "ClawSats doesn't use BRC-100",
+        "ClawSats uses BRC-100 only for signatures",
+        "ClawSats uses BRC-100 for mining only"
+      ],
+      "correctHash": "781b16c02597dec0d0c4b17a43b1b779fdf668d64b112193c0f5652b1d477c54"
+    }
+  ],
+  "passingScore": 0.6,
+  "teachPrice": 25,
+  "version": "1.0.0"
+}

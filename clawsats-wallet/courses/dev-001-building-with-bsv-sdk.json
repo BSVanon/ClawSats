@@ -1,0 +1,74 @@
+{
+  "id": "dev-001-building-with-bsv-sdk",
+  "title": "Building with @bsv/sdk",
+  "level": 3,
+  "prerequisites": [
+    "bsv-101-what-is-bsv",
+    "bsv-102-the-utxo-model",
+    "bsv-103-why-micropayments-matter",
+    "bsv-104-bsv-vs-other-blockchains",
+    "brc-029-payment-derivation",
+    "brc-042-key-derivation",
+    "brc-043-security-levels",
+    "brc-100-wallet-interface",
+    "brc-105-http-service-monetization"
+  ],
+  "category": "development",
+  "summary": "@bsv/sdk provides TypeScript classes for BSV transactions, keys, and scripts. Essential for building BSV applications.",
+  "content": "# DEV-001: Building with @bsv/sdk\n\n## What is @bsv/sdk?\n\n@bsv/sdk is the official TypeScript SDK for BSV blockchain development. It provides classes and utilities for:\n\n- **Transaction creation and signing**\n- **Key generation and management**\n- **Script building and validation**\n- **Serialization formats**\n\n## Installation\n\n```bash\nnpm install @bsv/sdk\n```\n\n## Basic Usage\n\n### Importing Classes\n\n```typescript\nimport { PrivateKey, PublicKey, Transaction, Script } from '@bsv/sdk'\n```\n\n### Creating Keys\n\n```typescript\n// Generate a new private key\nconst privateKey = PrivateKey.fromRandom()\n\n// Derive public key\nconst publicKey = privateKey.toPublicKey()\n\n// Get addresses\nconst p2pkhAddress = publicKey.toAddress()\n```\n\n## Transaction Building\n\n### Creating a Transaction\n\n```typescript\nconst tx = new Transaction()\n\n// Add inputs (from UTXOs)\ntx.addInput({\n  sourceTransaction: Buffer.from(txid, 'hex'),\n  sourceOutputIndex: 0,\n  unlockingScriptTemplate: new Script() // Will be filled when signing\n})\n\n// Add outputs\ntx.addOutput({\n  lockingScript: Script.fromAddress(address),\n  satoshis: 1000\n})\n```\n\n### Signing Transactions\n\n```typescript\n// Sign all inputs\ntx.sign(privateKey)\n\n// Get raw transaction\nconst rawTx = tx.toHex()\n```\n\n## Script Operations\n\n### P2PKH Script\n\n```typescript\nconst script = Script.fromAddress(address)\n// OP_DUP OP_HASH160 <pubkey-hash> OP_EQUALVERIFY OP_CHECKSIG\n```\n\n### Custom Scripts\n\n```typescript\nconst customScript = new Script()\n  .add('OP_1')\n  .add('OP_ADD')\n  .add('OP_5')\n  .add('OP_EQUAL')\n```\n\n## Serialization\n\n### Hex Format\n\n```typescript\nconst hex = tx.toHex()\nconst txFromHex = Transaction.fromHex(hex)\n```\n\n### BEEF Format\n\n```typescript\nconst beef = tx.toBEEF()\nconst txFromBeef = Transaction.fromBEEF(beef)\n```\n\n## Key Derivation\n\n### Basic Derivation\n\n```typescript\n// BIP32-style derivation (not recommended for privacy)\nconst childKey = privateKey.derive(0)\n```\n\n### BRC-42 Derivation\n\n```typescript\n// Use @bsv/wallet-toolbox for BRC-42 key derivation\nimport { derivePrivateKey, derivePublicKey } from '@bsv/wallet-toolbox'\n\nconst derivedPrivateKey = derivePrivateKey(privateKey, 'invoice-number', 'recipient-public-key')\n```\n\n## Error Handling\n\n```typescript\ntry {\n  const signedTx = tx.sign(privateKey)\n} catch (error) {\n  console.error('Signing failed:', error.message)\n}\n```\n\n## Advanced Transaction Features\n\n### Multi-Input Transactions\n\n```typescript\nconst tx = new Transaction()\n\n// Add multiple inputs\ntx.addInput({ /* input 1 */ })\ntx.addInput({ /* input 2 */ })\n\n// Add change output\ntx.addOutput({\n  lockingScript: Script.fromAddress(changeAddress),\n  satoshis: changeAmount\n})\n```\n\n### Data Embedding\n\n```typescript\n// Embed data in OP_RETURN output\ntx.addOutput({\n  lockingScript: new Script()\n    .add('OP_FALSE')\n    .add('OP_RETURN')\n    .add('CLAWMEM_V1')\n    .add(JSON.stringify(data)),\n  satoshis: 0\n})\n```\n\n## Script Validation\n\n### Script Evaluation\n\n```typescript\n// Evaluate a script\ntry {\n  const result = script.evaluate(stack)\n} catch (error) {\n  console.error('Script validation failed:', error.message)\n}\n```\n\n### Standard Scripts\n\n```typescript\n// P2PKH validation\nif (script.isP2PKH()) {\n  // Handle P2PKH spending\n}\n\n// Multisig validation\nif (script.isMultisig()) {\n  // Handle multisig spending\n}\n```\n\n## Integration Examples\n\n### Simple Payment\n\n```typescript\nasync function sendPayment(privateKey, recipient, amount, utxos) {\n  const tx = new Transaction()\n  \n  // Add inputs\n  for (const utxo of utxos) {\n    tx.addInput({\n      sourceTransaction: Buffer.from(utxo.txid, 'hex'),\n      sourceOutputIndex: utxo.vout,\n      unlockingScriptTemplate: new Script()\n    })\n  }\n  \n  // Add outputs\n  tx.addOutput({\n    lockingScript: Script.fromAddress(recipient),\n    satoshis: amount\n  })\n  \n  // Sign and return\n  tx.sign(privateKey)\n  return tx.toHex()\n}\n```\n\n### Data Transaction\n\n```typescript\nasync function storeData(privateKey, data, utxo) {\n  const tx = new Transaction()\n  \n  // Input\n  tx.addInput({\n    sourceTransaction: Buffer.from(utxo.txid, 'hex'),\n    sourceOutputIndex: utxo.vout,\n    unlockingScriptTemplate: new Script()\n  })\n  \n  // Data output\n  tx.addOutput({\n    lockingScript: new Script()\n      .add('OP_FALSE')\n      .add('OP_RETURN')\n      .add(data),\n    satoshis: 0\n  })\n  \n  // Change output\n  tx.addOutput({\n    lockingScript: Script.fromAddress(changeAddress),\n    satoshis: changeAmount\n  })\n  \n  tx.sign(privateKey)\n  return tx.toHex()\n}\n```\n\n## Best Practices\n\n- **Use compressed keys** for smaller transactions\n- **Validate transactions** before broadcasting\n- **Use BRC-42** for privacy-preserving key derivation\n- **Handle fees** appropriately\n- **Test with small amounts** first\n\n## ClawSats Integration\n\nClawSats uses @bsv/sdk throughout:\n\n- **Transaction creation** for payments\n- **Key derivation** for BRC-29 addresses\n- **Script validation** for security\n- **Serialization** for SPV proofs\n\n## Conclusion\n\n@bsv/sdk is the foundation for BSV development. Master these classes and you'll be able to build any BSV application.",
+  "quiz": [
+    {
+      "question": "@bsv/sdk provides TypeScript classes for BSV development",
+      "options": [
+        "@bsv/sdk provides TypeScript classes for BSV development",
+        "@bsv/sdk is only for Python",
+        "@bsv/sdk is deprecated",
+        "@bsv/sdk requires C++"
+      ],
+      "correctHash": "02a05d176a528442be924640303d6a4a3943c1ccbee62ae39be29f055996780e"
+    },
+    {
+      "question": "PrivateKey.fromRandom() generates a new secp256k1 private key",
+      "options": [
+        "PrivateKey.fromRandom() generates a new secp256k1 private key",
+        "PrivateKey.fromRandom() loads from environment",
+        "PrivateKey.fromRandom() uses BIP32",
+        "PrivateKey.fromRandom() is for public keys only"
+      ],
+      "correctHash": "cba309667556274b7090e85771c59c94c42554f8d8acd9fb96ff447c41089313"
+    },
+    {
+      "question": "Transaction.addInput() adds a UTXO to spend",
+      "options": [
+        "Transaction.addInput() adds a UTXO to spend",
+        "Transaction.addInput() creates new coins",
+        "Transaction.addInput() is for fees only",
+        "Transaction.addInput() validates signatures"
+      ],
+      "correctHash": "1f6b6b224446e57a154e74ef1b69ecd420f7ee2b8095bb71dba90c48f15bae50"
+    },
+    {
+      "question": "Script.fromAddress() creates a P2PKH locking script",
+      "options": [
+        "Script.fromAddress() creates a P2PKH locking script",
+        "Script.fromAddress() creates custom scripts",
+        "Script.fromAddress() is for unlocking",
+        "Script.fromAddress() requires private keys"
+      ],
+      "correctHash": "91f832cc5a6cec7d19a56e18a8af298dee88c48c9ca44ec47a1cd52872038aa0"
+    },
+    {
+      "question": "ClawSats uses @bsv/sdk for transaction creation and key derivation",
+      "options": [
+        "ClawSats uses @bsv/sdk for transaction creation and key derivation",
+        "ClawSats doesn't use @bsv/sdk",
+        "ClawSats uses @bsv/sdk only for UI",
+        "ClawSats uses @bsv/sdk for mining"
+      ],
+      "correctHash": "9a517868b524039436c0e6473897177aba6f4250f4945b44e27ee2767eb9ef4e"
+    }
+  ],
+  "passingScore": 0.6,
+  "teachPrice": 25,
+  "version": "1.0.0"
+}

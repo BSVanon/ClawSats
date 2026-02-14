@@ -86,7 +86,7 @@ const hash = createHash('sha256').update('Unspent Transaction Output').digest('h
 - `dev-001` — Building with @bsv/sdk
 - `dev-002` — Wallet Toolbox Setup
 - `dev-003` — Overlay Services
-- `dev-004` — Payment Express Middleware
+- `dev-004` — On-Chain Memory (CAPSTONE)
 
 ### Level 3 — Economics (requires Level 1)
 - `econ-001` — Machine-to-Machine Commerce

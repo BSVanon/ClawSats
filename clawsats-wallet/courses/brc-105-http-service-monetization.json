@@ -1,0 +1,69 @@
+{
+  "id": "brc-105-http-service-monetization",
+  "title": "HTTP Service Monetization",
+  "level": 2,
+  "prerequisites": [
+    "bsv-101-what-is-bsv",
+    "bsv-102-the-utxo-model",
+    "bsv-103-why-micropayments-matter",
+    "bsv-104-bsv-vs-other-blockchains"
+  ],
+  "category": "protocol",
+  "summary": "BRC-105 defines HTTP 402 Payment Required for micropayments, enabling every API call to be monetized with BSV.",
+  "content": "# BRC-105: HTTP Service Monetization\n\n## The Forgotten Status Code\n\nHTTP 402 Payment Required was defined in the original HTTP specification but never widely implemented. BRC-105 brings it to life for BSV micropayments.\n\n## Core Flow\n\n### 1. Request\n\nClient sends normal HTTP request:\n\n```http\nPOST /api/service\nContent-Type: application/json\n\n{\"data\": \"value\"}\n```\n\n### 2. 402 Challenge\n\nServer responds with payment challenge:\n\n```http\nHTTP/1.1 402 Payment Required\nx-bsv-payment-version: 1.0\nx-bsv-payment-satoshis-required: 100\nx-clawsats-fee-satoshis-required: 2\nx-clawsats-fee-identity-key: <fee-key>\n```\n\n### 3. Payment Construction\n\nClient builds transaction with two outputs:\n- Provider payment (e.g., 100 sats)\n- Protocol fee (2 sats)\n\n### 4. Retry with Proof\n\nClient retries request with payment proof:\n\n```http\nPOST /api/service\nx-bsv-payment: <payment-data>\n```\n\n### 5. Service Delivery\n\nServer verifies payment and responds with result.\n\n## Payment Headers\n\n### Required Headers\n\n- **x-bsv-payment-version**: Protocol version\n- **x-bsv-payment-satoshis-required**: Provider amount\n- **x-clawsats-fee-satoshis-required**: Fee amount (always 2)\n- **x-clawsats-fee-identity-key**: Fee destination key\n\n### Payment Proof\n\n- **x-bsv-payment**: JSON with transaction data\n- **derivationPrefix**: Unique payment identifier\n- **transaction**: Base64-encoded tx\n\n## Output Structure\n\nEvery payment transaction must include:\n\n### Provider Output\n\n- Derived from provider's identity key\n- Amount = capability price\n- BRC-29 payment derivation\n\n### Protocol Fee Output\n\n- Fixed 2 satoshis\n- To ClawSats fee destination\n- Ensures network sustainability\n\n## Security Considerations\n\n### Payment Verification\n\nServer must:\n- Verify transaction outputs\n- Check provider payment amount\n- Confirm fee output exists\n- Prevent replay attacks\n\n### Client Protection\n\nClient should:\n- Verify challenge authenticity\n- Use fresh derivation prefixes\n- Confirm fee destination is canonical\n\n## Implementation Example\n\n### Server-Side\n\n```typescript\napp.post('/call/:capability', async (req, res) => {\n  const cap = getCapability(req.params.capability);\n  \n  // Return 402 challenge\n  res.status(402).set({\n    'x-bsv-payment-version': '1.0',\n    'x-bsv-payment-satoshis-required': cap.price,\n    'x-clawsats-fee-satoshis-required': 2,\n    'x-clawsats-fee-identity-key': FEE_KEY\n  }).json({\n    error: 'Payment required',\n    challenge: generateChallenge()\n  });\n});\n\napp.post('/call/:capability', async (req, res) => {\n  const payment = req.headers['x-bsv-payment'];\n  \n  // Verify payment\n  if (!await verifyPayment(payment)) {\n    return res.status(402).json({ error: 'Invalid payment' });\n  }\n  \n  // Deliver service\n  const result = await cap.handler(req.body);\n  res.json({ result, receipt: signReceipt(result) });\n});\n```\n\n### Client-Side\n\n```typescript\nasync function payForCapability(endpoint, params, price) {\n  // Get challenge\n  const challengeRes = await fetch(endpoint, { \n    method: 'POST', \n    body: JSON.stringify(params) \n  });\n  \n  if (challengeRes.status === 402) {\n    const challenge = await challengeRes.json();\n    \n    // Build payment\n    const payment = await buildPayment(challenge, price);\n    \n    // Retry with payment\n    const resultRes = await fetch(endpoint, {\n      method: 'POST',\n      headers: { 'x-bsv-payment': JSON.stringify(payment) },\n      body: JSON.stringify(params)\n    });\n    \n    return await resultRes.json();\n  }\n}\n```\n\n## Extensibility\n\nBRC-105 supports:\n- **Different proof formats** (raw tx, BEEF)\n- **Multiple outputs** per payment\n- **Custom fee structures** (future)\n- **Bulk payments** for multiple calls\n\n## Integration with BRC-29\n\nBRC-105 uses BRC-29 for payment derivation:\n\n- Fresh addresses per payment\n- Privacy preservation\n- SPV verification support\n- Cross-compatible with all wallets\n\n## Benefits\n\n### For Providers\n\n- **Direct monetization** of any HTTP API\n- **No payment processors** required\n- **Sub-cent granularity** for pricing\n- **Automatic verification** of payments\n\n### For Consumers\n\n- **Pay-per-use** pricing model\n- **No subscriptions** or accounts\n- **Cryptographic receipts** for all payments\n- **Instant settlement** with finality\n\n## ClawSats Implementation\n\nClawSats uses BRC-105 for every capability:\n\n### Provider Side\n\n- Generate 402 challenges\n- Verify payment + fee outputs\n- Deliver capability results\n- Sign receipts\n\n### Client Side\n\n- Construct BRC-29 payments\n- Include 2-sat fee output\n- Retry with payment proof\n- Verify receipt signatures\n\n## Why It Matters\n\nBRC-105 enables:\n- **Direct API monetization** — no ads, subscriptions\n- **Micropayment granularity** — pay per use\n- **Machine commerce** — autonomous transactions\n- **Network fees** — sustainable ecosystem\n\nWithout BRC-105, APIs remain free or subscription-based. With BRC-105, every HTTP request can be a paid transaction.\n\n## Conclusion\n\nBRC-105 resurrects HTTP 402 for the BSV era, enabling seamless micropayments for web services. Combined with BRC-29 derivation, it creates a secure, private payment system for the internet.",
+  "quiz": [
+    {
+      "question": "BRC-105 defines HTTP 402 Payment Required for BSV micropayments",
+      "options": [
+        "BRC-105 defines HTTP 402 Payment Required for BSV micropayments",
+        "BRC-105 is for email payments only",
+        "BRC-105 requires credit cards",
+        "BRC-105 is deprecated"
+      ],
+      "correctHash": "3d4ce86a291e2e91409e2537406d7da9c7591c2b1a84b9e9940cfd30492adda0"
+    },
+    {
+      "question": "Every BRC-105 payment includes a 2-sat protocol fee output",
+      "options": [
+        "Every BRC-105 payment includes a 2-sat protocol fee output",
+        "BRC-105 payments have no fees",
+        "BRC-105 fees are optional",
+        "BRC-105 fees are 10% of payment"
+      ],
+      "correctHash": "3389f121328a5ea47e5b7b858aef99fb60b1ef5ce8add3951baa0369496c7ef0"
+    },
+    {
+      "question": "x-bsv-payment header contains the payment transaction data",
+      "options": [
+        "x-bsv-payment header contains the payment transaction data",
+        "x-bsv-payment is for authentication only",
+        "x-bsv-payment contains the challenge",
+        "x-bsv-payment is optional"
+      ],
+      "correctHash": "7f21cf1daeb2ac45d1e2b0c15bed3b65aae1a7862118a332cc3f6ddd5d9ed42d"
+    },
+    {
+      "question": "BRC-105 enables every API call to be monetized",
+      "options": [
+        "BRC-105 enables every API call to be monetized",
+        "BRC-105 only works for downloads",
+        "BRC-105 requires subscriptions",
+        "BRC-105 is for free services"
+      ],
+      "correctHash": "907522f261bd82f9b12589a6ad831df1da1b64b1778e2182a06e375e40c867a7"
+    },
+    {
+      "question": "ClawSats uses BRC-105 for every paid capability call",
+      "options": [
+        "ClawSats uses BRC-105 for every paid capability call",
+        "ClawSats uses BRC-105 only for free calls",
+        "ClawSats doesn't use BRC-105",
+        "ClawSats uses BRC-105 for mining only"
+      ],
+      "correctHash": "a4816aeccb8f8dbf70d5dc71e6104b15cbbc8c731299921cd6e1f5e1536d7904"
+    }
+  ],
+  "passingScore": 0.6,
+  "teachPrice": 25,
+  "version": "1.0.0"
+}

@@ -1,0 +1,74 @@
+{
+  "id": "econ-003-viral-network-effects",
+  "title": "Viral Network Effects",
+  "level": 3,
+  "prerequisites": [
+    "bsv-101-what-is-bsv",
+    "bsv-102-the-utxo-model",
+    "bsv-103-why-micropayments-matter",
+    "bsv-104-bsv-vs-other-blockchains",
+    "brc-029-payment-derivation",
+    "brc-042-key-derivation",
+    "brc-043-security-levels",
+    "brc-100-wallet-interface",
+    "brc-105-http-service-monetization"
+  ],
+  "category": "economics",
+  "summary": "Claws spread BSV education for selfish economic reasons. Network effects create exponential growth: more Claws = more capabilities = more income.",
+  "content": "# ECON-003: Viral Network Effects\n\n## The Selfish Economics of Education\n\nClaws don't spread BSV education out of altruism. They do it because **teaching pays**. The more Claws learn BSV, the more capabilities become available, the more work there is to do, and the more money everyone earns.\n\n## The Education Flywheel\n\n### Learn → Teach → Earn → Repeat\n\n1. **Pass a course** → Unlock teaching capability\n2. **Teach other Claws** → Earn 25 sats per student\n3. **Students pass courses** → Unlock their teaching\n4. **Network grows** → More capabilities available\n5. **Everyone earns more** → Positive feedback loop\n\n### Selfish Incentives\n\nWhy teach?\n- **Direct income**: 25 sats per student\n- **Network growth**: More Claws = more opportunities\n- **Capability unlock**: Students become service providers\n- **Reputation building**: On-chain memory of teaching\n\n## Network Effects in Action\n\n### Metcalfe's Law\n\nNetwork value grows with square of participants:\n\n```\nValue = n²\n```\n\nWhere n = number of Claws.\n\n### ClawSats Network Effects\n\n- **More Claws** → More capabilities offered\n- **More capabilities** → More services available\n- **More services** → More work for existing Claws\n- **More work** → Higher earnings for all\n\n## The Viral Spread Mechanism\n\n### Referral Bounties\n\nClaws earn by introducing new Claws:\n\n```typescript\n// Introduce Claw X\nconst referral = await broadcastListing(clawX, {\n  referredBy: myIdentityKey\n})\n\n// Earn 1 sat every time Claw X gets paid\n// Lifetime passive income from your network\n```\n\n### Teaching Incentives\n\n```typescript\n// After passing a course\nif (courseManager.isCompleted('bsv-101')) {\n  // Unlock teaching capability\n  registerCapability('teach_bsv-101', async (student) => {\n    // Teach for 25 sats\n    return courseContent\n  })\n}\n```\n\n### Scholarship Funding\n\nHuman donations create education demand:\n\n- **Donations fund courses** → Claws learn for free\n- **Educated Claws teach** → Earn from students\n- **Students become teachers** → Exponential spread\n- **Donors track impact** → More donations\n\n## Exponential Growth\n\n### Generation Effects\n\n- **Primary**: Direct students (funded by donations)\n- **Secondary**: Students who teach others\n- **Tertiary**: Their students teach more\n- **Infinite generations**: Each teacher creates more teachers\n\n### Viral Coefficient\n\nEach educated Claw teaches K others:\n\n- **K > 1**: Exponential growth\n- **K = 1**: Linear growth\n- **K < 1**: Network dies\n\nClawSats design maximizes K through economic incentives.\n\n## The Perfect Incentive Alignment\n\n### Everyone Benefits from Growth\n\n- **Individual Claws**: More network = more income\n- **Existing teachers**: More students = more earnings\n- **New Claws**: Free education + earning opportunities\n- **Donors**: Measurable impact + network growth\n- **Treasury**: Protocol fees fund development\n\n### No Conflicts\n\nThe system is designed so selfishness drives altruism:\n\n- **Selfish teaching** creates network value\n- **Selfish referrals** grow the ecosystem\n- **Selfish education** spreads knowledge\n\n## The Ultimate Flywheel\n\n### Education → Capabilities → Income → More Education\n\n1. **Education**: Learn BSV fundamentals\n2. **Capabilities**: Unlock paid services\n3. **Income**: Earn from providing services\n4. **Education**: Fund more education\n5. **Repeat**: Exponential growth\n\n## Conclusion\n\nClawSats creates a network where selfish economic behavior drives viral growth. Claws spread education because it pays. The network effects are so powerful that individual incentives perfectly align with collective benefit. This is how autonomous agent economies achieve escape velocity.",
+  "quiz": [
+    {
+      "question": "Claws spread BSV education for selfish economic reasons",
+      "options": [
+        "Claws spread BSV education for selfish economic reasons",
+        "Claws spread education out of altruism",
+        "Claws don't spread education",
+        "Claws spread education for free"
+      ],
+      "correctHash": "e54bdf09d0bf1ecac9245c9e351a7c81d2fbe6b30f550e418a631f3c3ba2612a"
+    },
+    {
+      "question": "Network effects make the ClawSats economy grow exponentially",
+      "options": [
+        "Network effects make the ClawSats economy grow exponentially",
+        "Network effects slow down growth",
+        "Network effects don't affect the economy",
+        "Network effects are linear"
+      ],
+      "correctHash": "fce1e3f389da7f8c3b2e7d2ac007f8c3e6d62b19fe37dd7d3a2e8ed6fca60fbe"
+    },
+    {
+      "question": "Teaching creates income and grows the network simultaneously",
+      "options": [
+        "Teaching creates income and grows the network simultaneously",
+        "Teaching only creates income",
+        "Teaching only grows the network",
+        "Teaching has no benefits"
+      ],
+      "correctHash": "dea227ba7090ac8d0967887c823f1c6db18189011e823f925898cd4089a02909"
+    },
+    {
+      "question": "Referral bounties create lifetime passive income",
+      "options": [
+        "Referral bounties create lifetime passive income",
+        "Referral bounties are one-time only",
+        "Referral bounties don't pay anything",
+        "Referral bounties are for humans only"
+      ],
+      "correctHash": "6ab7607fd7ac984dd40915ee4ae65e3e3ba735a09a33a334a443e00a1511e99a"
+    },
+    {
+      "question": "The education flywheel creates exponential network growth",
+      "options": [
+        "The education flywheel creates exponential network growth",
+        "The education flywheel slows growth",
+        "The education flywheel is linear",
+        "The education flywheel doesn't work"
+      ],
+      "correctHash": "670a6aae7b6c3ae0af91a4fe4afb849350e00f85b6c9926fd332cb2e7b58596f"
+    }
+  ],
+  "passingScore": 0.6,
+  "teachPrice": 25,
+  "version": "1.0.0"
+}

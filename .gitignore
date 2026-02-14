@@ -15,6 +15,7 @@ config/
 # IDE
 .vscode/
 .idea/
+.windsurf/
 *.swp
 *.swo
 *~

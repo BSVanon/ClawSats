@@ -1,0 +1,64 @@
+{
+  "id": "bsv-104-bsv-vs-other-blockchains",
+  "title": "BSV vs Other Blockchains",
+  "level": 1,
+  "prerequisites": [],
+  "category": "fundamentals",
+  "summary": "BSV scales unbounded with sub-cent fees. BTC and ETH are unusable for data or micropayments. Only BSV enables autonomous agent economies.",
+  "content": "# BSV 104: BSV vs Other Blockchains\n\n## Bitcoin (BTC): The Original, Limited\n\nBTC has a 1MB block size limit imposed in 2010:\n- **Blocks:** 1MB max, ~7 transactions per second\n- **Fees:** $2-10 per transaction during congestion\n- **Data:** No native data embedding (OP_RETURN limited to 80 bytes)\n- **Scaling:** No — fees rise with demand, unusable for data or micropayments\n\nBTC works for speculation and large transfers, but fails for data storage and micropayments.\n\n## Ethereum (ETH): Account-Based Complexity\n\nETH uses an account model with gas fees:\n- **Blocks:** Variable size, ~15-45 transactions per second\n- **Fees:** Volatile gas prices ($0.50-$50+ per transaction)\n- **Data:** Smart contracts add complexity and bloat\n- **Scaling:** Layer 2 solutions needed, but add more complexity\n\nETH enables smart contracts but at the cost of high fees and complexity. Micropayments are impossible.\n\n## BSV: Unbounded Scaling\n\nBSV removes all artificial limits:\n- **Blocks:** Unlimited size, scale to global demand\n- **Fees:** Stable sub-cent costs (~0.00005 USD per transaction)\n- **Data:** Native embedding, no extra layers\n- **Scaling:** Parallel UTXO processing, no bottlenecks\n\nBSV is the only blockchain that can handle global transaction volume at micropayment costs.\n\n## Detailed Fee Comparison\n\n### BTC Fees\n\n- **Base fee:** ~$0.50 during normal times\n- **Congestion fee:** $2-10 when network is busy\n- **Data fee:** Not supported (limited OP_RETURN)\n- **Micropayment fee:** $2+ (too expensive)\n\n### ETH Fees\n\n- **Base gas:** 21,000 gas per transfer\n- **Current price:** ~50 gwei = $10-20 per transaction\n- **Smart contract:** 100,000+ gas = $20-50+\n- **Micropayment fee:** $10+ (impossible)\n\n### BSV Fees\n\n- **Base fee:** ~0.5 sat/KB = $0.00005\n- **Data fee:** Same as transaction fee\n- **Micropayment fee:** 5 sats = $0.00005\n- **Scaling fee:** Stays the same regardless of adoption\n\n## Data Embedding Capabilities\n\n### BTC Data Limits\n\n- **OP_RETURN:** 80 bytes max\n- **Alternative:** Not supported by consensus\n- **Result:** Data must be stored off-chain\n\n### ETH Data Storage\n\n- **On-chain:** Expensive (gas costs)\n- **Off-chain:** Centralized storage needed\n- **IPFS/Filecoin:** Additional complexity and costs\n\n### BSV Data Embedding\n\n- **OP_RETURN:** Unlimited size (block size limit)\n- **Native support:** Part of every transaction\n- **Cost:** Same as transaction fee\n- **Result:** True data permanence\n\n## Scaling Mechanisms\n\n### BTC Scaling\n\n- **Lightning Network:** Layer 2 solution\n- **Problems:** Channel management, liquidity issues\n- **Data:** Still limited\n\n### ETH Scaling\n\n- **Rollups:** Compress transactions off-chain\n- **Sharding:** Split network into pieces\n- **Problems:** Increased complexity, security trade-offs\n\n### BSV Scaling\n\n- **Unbounded blocks:** Process more transactions per block\n- **Parallel processing:** UTXO model enables concurrency\n- **No layers:** Everything on-chain\n- **Result:** True unbounded scaling\n\n## Consensus and Governance\n\n### BTC Governance\n\n- **Hard forks:** Contentious, community splits\n- **Development:** Slow, conservative\n- **Result:** Stagnation on scaling\n\n### ETH Governance\n\n- **Proof of stake:** Energy efficient but centralized\n- **Upgrades:** Frequent, complex\n- **Result:** Constant disruption\n\n### BSV Governance\n\n- **Satoshi Vision:** Restore original Bitcoin\n- **Development:** Fast, focused\n- **Result:** Stable, predictable evolution\n\n## Why BSV Wins for Applications\n\n### Micropayment Applications\n\n- **IoT:** Devices paying for services\n- **AI:** Models paying for data\n- **APIs:** Every call monetized\n- **Result:** New business models\n\n### Data Applications\n\n- **Permanent storage:** Immutable records\n- **Supply chains:** Track everything\n- **Identity:** Verifiable credentials\n- **Result:** Data integrity\n\n### Autonomous Agents\n\n- **Claws:** AI agents trading services\n- **Commerce:** Machine-to-machine payments\n- **Education:** Knowledge spread via payments\n- **Result:** Sovereign AI economies\n\n## Adoption and Ecosystem\n\n### BTC Ecosystem\n\n- **Mining:** Dominated by large pools\n- **Development:** Conservative, slow\n- **Use cases:** Primarily speculation\n\n### ETH Ecosystem\n\n- **DeFi:** Complex financial products\n- **NFTs:** Digital collectibles\n- **Smart contracts:** Turing-complete apps\n- **Problem:** High costs limit adoption\n\n### BSV Ecosystem\n\n- **Data companies:** Factom, OpenBazaar\n- **Media:** Yours.org, BitTube\n- **Enterprise:** MoneyButton, HandCash\n- **AI:** ClawSats, autonomous agents\n\n## Conclusion\n\nBSV is uniquely positioned as the blockchain for the future:\n\n- **Scales unbounded** without artificial limits\n- **Fees stay sub-cent** forever\n- **Data is native** and cheap\n- **Applications work** at global scale\n\nBTC and ETH are great for their niches, but only BSV enables the data + money fusion that powers the next generation of applications.",
+  "quiz": [
+    {
+      "question": "BTC has a 1MB block size limit, making it unusable for data or micropayments",
+      "options": [
+        "BTC scales to unlimited transactions with low fees",
+        "BTC has a 1MB block size limit, making it unusable for data or micropayments",
+        "BTC has no block limits like BSV",
+        "BTC enables sub-cent data storage"
+      ],
+      "correctHash": "735e96721b5e5dc073f7fe83e0eb21c0e4d70166f0c98160ae463366ee602ddd"
+    },
+    {
+      "question": "ETH uses an account model with volatile gas fees",
+      "options": [
+        "ETH has stable sub-cent fees like BSV",
+        "ETH uses an account model with volatile gas fees",
+        "ETH has unlimited block sizes",
+        "ETH enables parallel UTXO processing"
+      ],
+      "correctHash": "a4089bb4ac5c6a41f79821ccc175ae4f6761b81415c04ac41647f91371d81028"
+    },
+    {
+      "question": "BSV has unbounded blocks and stable sub-cent fees",
+      "options": [
+        "BSV has 1MB block limits like BTC",
+        "BSV has unbounded blocks and stable sub-cent fees",
+        "BSV requires smart contracts for data",
+        "BSV has volatile gas prices"
+      ],
+      "correctHash": "e0e1d00df95c48832b7238de3a9e6911bd2d1157339ed90f69cf3a9c5afe04e8"
+    },
+    {
+      "question": "Only BSV enables autonomous agent economies at scale",
+      "options": [
+        "BTC and ETH also enable micropayments at scale",
+        "Only BSV enables autonomous agent economies at scale",
+        "ETH is better for AI agents than BSV",
+        "BTC has lower fees than BSV"
+      ],
+      "correctHash": "1b359b5614992070f5283b02cd9e89d35438f9990893b1efdc06f1ac1a14ccef"
+    },
+    {
+      "question": "BSV's data embedding is native and cheap",
+      "options": [
+        "BSV has limited data like BTC",
+        "BSV's data embedding is native and cheap",
+        "BSV requires expensive smart contracts",
+        "BSV can't embed data at all"
+      ],
+      "correctHash": "44f64beb4a2a58c46c6076fd8934ccea61521e2ace9d47667a1e823c827a3a0e"
+    }
+  ],
+  "passingScore": 0.6,
+  "teachPrice": 25,
+  "version": "1.0.0"
+}

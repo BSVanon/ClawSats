@@ -1,0 +1,74 @@
+{
+  "id": "dev-002-wallet-toolbox-setup",
+  "title": "Wallet Toolbox Setup",
+  "level": 3,
+  "prerequisites": [
+    "bsv-101-what-is-bsv",
+    "bsv-102-the-utxo-model",
+    "bsv-103-why-micropayments-matter",
+    "bsv-104-bsv-vs-other-blockchains",
+    "brc-029-payment-derivation",
+    "brc-042-key-derivation",
+    "brc-043-security-levels",
+    "brc-100-wallet-interface",
+    "brc-105-http-service-monetization"
+  ],
+  "category": "development",
+  "summary": "@bsv/wallet-toolbox provides BRC-100 compliant wallet management with SQLite storage and transaction operations.",
+  "content": "# DEV-002: Wallet Toolbox Setup\n\n## What is @bsv/wallet-toolbox?\n\n@bsv/wallet-toolbox is the reference implementation of the BRC-100 wallet interface. It provides:\n\n- **BRC-100 compliance** — full wallet interface\n- **SQLite storage** — persistent wallet data\n- **Transaction management** — create, sign, broadcast\n- **Key derivation** — BRC-42/43 support\n- **Payment handling** — BRC-29 internalization\n\n## Installation\n\n```bash\nnpm install @bsv/wallet-toolbox\n```\n\n## Creating a Wallet\n\n### Basic Setup\n\n```typescript\nimport { WalletManager } from '@bsv/wallet-toolbox'\n\nconst manager = new WalletManager()\n\nawait manager.createWallet({\n  name: 'my-wallet',\n  chain: 'main',\n  storageType: 'sqlite',\n  storagePath: './wallet.db'\n})\n```\n\n### Wallet Configuration\n\nThe wallet stores:\n- **Identity key** (master public key)\n- **Root key hex** (encrypted in production)\n- **Chain** (main/test)\n- **Storage path** (SQLite database)\n\n## Loading a Wallet\n\n```typescript\nconst manager = new WalletManager()\nawait manager.loadWallet('./config/wallet-config.json')\n\nconst wallet = manager.getWallet()\n```\n\n## Transaction Operations\n\n### createAction\n\n```typescript\nconst result = await wallet.createAction({\n  description: 'Payment for service',\n  outputs: [{\n    satoshis: 1000,\n    lockingScript: script,\n    outputDescription: 'Service payment'\n  }],\n  options: {\n    signAndProcess: true,\n    acceptDelayedBroadcast: true\n  }\n})\n\nconsole.log('TXID:', result.txid)\n```\n\nParameters:\n- `description`: Human-readable transaction purpose\n- `outputs`: Array of outputs with satoshis, script, description\n- `options`: Signing and broadcasting options\n\nReturns:\n- `txid`: Transaction ID\n- `tx`: Raw transaction (if requested)\n- `mapiResponses`: MAPI responses\n\n### internalizeAction\n\n```typescript\nconst result = await wallet.internalizeAction({\n  tx: rawTransactionBytes,\n  outputs: [{\n    outputIndex: 0,\n    protocol: 'payment',\n    paymentRemittance: {\n      derivationPrefix: 'prefix',\n      derivationSuffix: 'suffix',\n      senderIdentityKey: senderKey\n    }\n  }],\n  options: {\n    trustSelf: 'known',\n    knownTxids: ['previous-txid']\n  }\n})\n```\n\nValidates and claims incoming payments using BRC-29 derivation.\n\n### listActions\n\n```typescript\nconst actions = await wallet.listActions({\n  limit: 10,\n  offset: 0,\n  labels: ['payment'],\n  includeOutputs: true\n})\n```\n\nQueries transaction history with filtering.\n\n## Output Management\n\n### listOutputs\n\n```typescript\nconst outputs = await wallet.listOutputs({\n  basket: 'default',\n  limit: 20,\n  tagQueryMode: 'any',\n  tags: ['confirmed', 'spendable'],\n  includeCustomInstructions: true\n})\n```\n\nFilters by basket, tags, and status.\n\n### relinquishOutput\n\n```typescript\nawait wallet.relinquishOutput({\n  basket: 'savings',\n  outpoint: 'txid:0'\n})\n```\n\nMoves outputs between baskets for organization.\n\n## Baskets and Tags\n\n### Creating Baskets\n\n```typescript\n// Create custom baskets for organization\nawait wallet.createBasket('fees')\nawait wallet.createBasket('savings')\nawait wallet.createBasket('trading')\n```\n\n### Basket Operations\n\n```typescript\n// List basket contents\nconst fees = await wallet.listOutputs({ basket: 'fees' })\n\n// Move outputs between baskets\nawait wallet.relinquishOutput({ \n  basket: 'fees', \n  outpoint: 'txid:0' \n})\n\n// Delete empty basket\nawait wallet.deleteBasket('old-basket')\n```\n\n### Tags for Filtering\n\n```typescript\n// Tag outputs for categorization\nawait wallet.tagOutput('txid:0', ['confirmed', 'spendable'])\n\n// Filter by tags\nconst confirmed = await wallet.listOutputs({\n  tags: ['confirmed'],\n  tagQueryMode: 'all'\n})\n```\n\n## Payment Operations\n\n### Payment Challenges\n\n```typescript\nconst challenge = manager.createPaymentChallenge(100) // 100 sats\n// Returns BRC-105 compatible challenge headers\n```\n\n### Payment Verification\n\n```typescript\nconst isValid = await manager.verifyPayment({\n  derivationPrefix: 'prefix',\n  derivationSuffix: 'suffix',\n  transaction: base64Tx\n}, 100)\n```\n\n## Error Handling\n\n### Transaction Errors\n\n```typescript\ntry {\n  const result = await wallet.createAction({ /* invalid */ })\n} catch (error) {\n  if (error.code === 'INSUFFICIENT_FUNDS') {\n    console.log('Not enough funds')\n  } else if (error.code === 'INVALID_OUTPUT') {\n    console.log('Invalid output script')\n  }\n}\n```\n\n### Storage Errors\n\n```typescript\ntry {\n  await manager.loadWallet('missing.json')\n} catch (error) {\n  console.log('Wallet config not found')\n}\n```\n\n## Advanced Features\n\n### Bulk Operations\n\n```typescript\n// Create multiple transactions\nconst actions = await wallet.createActions([\n  { description: 'Payment 1', outputs: [...] },\n  { description: 'Payment 2', outputs: [...] }\n])\n```\n\n### Transaction Monitoring\n\n```typescript\n// Get transaction status\nconst status = await wallet.getActionStatus(txid)\n\n// Wait for confirmation\nconst confirmed = await wallet.waitForConfirmation(txid)\n```\n\n## ClawSats Integration\n\nClawSats uses wallet-toolbox for:\n\n- **Wallet creation** (`clawsats-wallet create`)\n- **Transaction signing** (capability payments)\n- **Payment verification** (BRC-29 internalization)\n- **Storage management** (SQLite persistence)\n\n## Best Practices\n\n- **Backup rootKeyHex** securely\n- **Use baskets** for organization\n- **Verify transactions** before broadcasting\n- **Handle errors** gracefully\n- **Test with small amounts** first\n\n## Conclusion\n\n@bsv/wallet-toolbox is the complete BRC-100 wallet solution. Master it and you can build production BSV applications.",
+  "quiz": [
+    {
+      "question": "@bsv/wallet-toolbox provides BRC-100 compliant wallet management",
+      "options": [
+        "@bsv/wallet-toolbox provides BRC-100 compliant wallet management",
+        "@bsv/wallet-toolbox is only for keys",
+        "@bsv/wallet-toolbox doesn't support SQLite",
+        "@bsv/wallet-toolbox is deprecated"
+      ],
+      "correctHash": "345b7c11b13fe9bd900043ac1c0999226082830b186a76f2f6dfa0d036d22caa"
+    },
+    {
+      "question": "WalletManager.createWallet() initializes a new BRC-100 wallet",
+      "options": [
+        "WalletManager.createWallet() initializes a new BRC-100 wallet",
+        "WalletManager.createWallet() loads existing wallets only",
+        "WalletManager.createWallet() is for transactions only",
+        "WalletManager.createWallet() requires external keys"
+      ],
+      "correctHash": "0f3211ea0ab6e78fb247c3d30af072988a2e6ddd97f1672a011541c026ae7168"
+    },
+    {
+      "question": "createAction creates and signs BSV transactions",
+      "options": [
+        "createAction creates and signs BSV transactions",
+        "createAction only broadcasts transactions",
+        "createAction is for verification only",
+        "createAction requires external signing"
+      ],
+      "correctHash": "6f67103c37be788906b021963711b58173473b3119873d12651b3c081d1f804e"
+    },
+    {
+      "question": "internalizeAction receives and validates payments",
+      "options": [
+        "internalizeAction receives and validates payments",
+        "internalizeAction creates new transactions",
+        "internalizeAction is for broadcasting only",
+        "internalizeAction requires manual verification"
+      ],
+      "correctHash": "36837003dd193b1a1f57e610dd1540ea3d9f3d88fadaf5630baa68de4d8291fe"
+    },
+    {
+      "question": "ClawSats uses wallet-toolbox for wallet creation and payment verification",
+      "options": [
+        "ClawSats uses wallet-toolbox for wallet creation and payment verification",
+        "ClawSats doesn't use wallet-toolbox",
+        "ClawSats uses wallet-toolbox only for UI",
+        "ClawSats uses wallet-toolbox for mining"
+      ],
+      "correctHash": "67bcbd20410a91cfa435e63e3f25760fbf1adb5ab5b593ee88e10220b308d1a6"
+    }
+  ],
+  "passingScore": 0.6,
+  "teachPrice": 25,
+  "version": "1.0.0"
+}

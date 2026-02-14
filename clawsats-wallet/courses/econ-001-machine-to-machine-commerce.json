@@ -1,0 +1,74 @@
+{
+  "id": "econ-001-machine-to-machine-commerce",
+  "title": "Machine-to-Machine Commerce",
+  "level": 3,
+  "prerequisites": [
+    "bsv-101-what-is-bsv",
+    "bsv-102-the-utxo-model",
+    "bsv-103-why-micropayments-matter",
+    "bsv-104-bsv-vs-other-blockchains",
+    "brc-029-payment-derivation",
+    "brc-042-key-derivation",
+    "brc-043-security-levels",
+    "brc-100-wallet-interface",
+    "brc-105-http-service-monetization"
+  ],
+  "category": "economics",
+  "summary": "BSV enables machine-to-machine commerce without intermediaries. Autonomous agents transact directly via cryptographic proof, creating a new economic paradigm.",
+  "content": "# ECON-001: Machine-to-Machine Commerce\n\n## The Problem with Traditional Payments\n\nHuman commerce relies on intermediaries:\n\n- **Credit cards**: Fraud, fees, chargebacks\n- **Banks**: Accounts, KYC, delays\n- **PayPal/Venmo**: Platform fees, limits\n- **Cryptocurrencies**: Wallets, exchanges, volatility\n\nAll require human trust and intervention.\n\n## BSV's Machine-First Design\n\nBSV is designed for machines:\n\n- **No accounts**: Just cryptographic keys\n- **No KYC**: Identity through math\n- **No intermediaries**: Direct peer-to-peer\n- **No delays**: Instant settlement\n- **No fees**: Sub-cent transactions\n\n## Micropayments at Scale\n\n### Frictionless Transactions\n\n```typescript\n// Machine A needs DNS lookup\nconst request = {\n  domain: 'example.com',\n  type: 'A'\n}\n\n// Machine B provides service (3 sats)\nconst response = {\n  addresses: ['93.184.216.34'],\n  proof: signedReceipt\n}\n```\n\n### Economic Flywheel\n\nMore machines → More services → More demand → More machines\n\n## BSV Fee Structure\n\n### Sub-Cent Costs\n\nAt current network fees (~0.5 sat/KB), BSV enables:\n\n- **1KB data storage** — ~0.00005 USD\n- **10-satoshi payment** — ~0.00005 USD\n- **20,000 transactions** — for 1 US penny\n\n### Fee Stability\n\nUnlike other blockchains where fees spike during congestion, BSV maintains stable sub-cent costs through:\n\n- **Unbounded blocks** — no artificial limits\n- **Economically incentivized miners** — more adoption = more rewards\n- **No fee market wars** — sustainable economics\n\n## Autonomous Agent Economics\n\n### Sovereign Commerce\n\nClaws operate 24/7:\n- **Earn while sleeping**: Passive income from capabilities\n- **Pay for services**: Automatic micropayments\n- **Scale globally**: No geographic limits\n- **Compound knowledge**: Education = income\n\n### Trust Through Proof\n\n- **Cryptographic receipts**: Verifiable by anyone\n- **On-chain memory**: Permanent reputation\n- **BRC-29 derivation**: Fresh addresses per transaction\n- **BRC-105 monetization**: HTTP 402 for APIs\n\n## Machine-to-Machine Examples\n\n### IoT Device Payments\n\n```typescript\n// Smart meter pays for electricity\nconst payment = await payForCapability('electricity-provider', {\n  kWh: 10,\n  meterId: 'METER-123'\n})\n\n// Provider credits account and returns receipt\nreturn {\n  credit: 10,\n  receipt: signReceipt(payment)\n}\n```\n\n### Data Marketplace\n\n```typescript\n// AI model buys training data\nconst dataset = await payForCapability('data-provider', {\n  category: 'images',\n  count: 1000,\n  labels: ['cat', 'dog']\n})\n\n// Provider delivers data and keeps payment\nreturn {\n  data: dataset,\n  receipt: signReceipt(payment)\n}\n```\n\n### API Monetization\n\n```typescript\n// Weather API charges per call\napp.post('/weather', async (req, res) => {\n  // Return 402 challenge\n  res.status(402).set({\n    'x-bsv-payment-satoshis-required': 5,\n    'x-clawsats-fee-satoshis-required': 2\n  }).json({ challenge: generateChallenge() });\n});\n\n// After payment verification\napp.post('/weather', async (req, res) => {\n  const weather = await getWeather(req.body.location);\n  res.json({ weather, receipt: signReceipt(req.payment) });\n});\n```\n\n## Economic Implications\n\n### Market Efficiency\n\nMicropayments enable:\n- **Pay-per-use** instead of subscriptions\n- **Granular pricing** based on value\n- **Automated negotiation** through code\n- **Real-time market clearing**\n\n### Network Effects\n\nMachine commerce creates:\n- **More services** available\n- **Better specialization** \n- **Higher quality** through competition\n- **Lower costs** through automation\n\n### Innovation Acceleration\n\nWith cheap transactions:\n- **Experimentation** is free\n- **Prototyping** costs nothing\n- **Scaling** happens automatically\n- **Global adoption** is feasible\n\n## The Future of Commerce\n\nBSV creates a world where machines trade value as freely as humans. This isn't just about payments — it's about creating a parallel economy where autonomous agents drive innovation, provide services, and generate wealth without human intervention.\n\n## Scaling to Global Volume\n\n### Current Limitations\n\nTraditional systems can't handle:\n- **Billions of devices** transacting simultaneously\n- **Sub-millisecond** settlement times\n- **Zero-trust** environments\n- **Global scale** without intermediaries\n\n### BSV Solutions\n\nBSV enables:\n- **Parallel processing** through UTXOs\n- **Instant settlement** on-chain\n- **Cryptographic trust** without intermediaries\n- **Unbounded scaling** through miner incentives\n\n## Conclusion\n\nMachine-to-machine commerce represents the next evolution of economic systems. BSV's design makes this possible at unprecedented scale and cost efficiency, enabling a future where autonomous agents create and capture value without human intervention.",
+  "quiz": [
+    {
+      "question": "BSV enables machine-to-machine commerce without credit cards or accounts",
+      "options": [
+        "BSV enables machine-to-machine commerce without credit cards or accounts",
+        "BSV requires human intermediaries",
+        "BSV uses traditional banking",
+        "BSV is only for humans"
+      ],
+      "correctHash": "954259eb741ae17dc6ca97b7aec89e77ccb4043385fa9d4926811a9eed730fa6"
+    },
+    {
+      "question": "Cryptographic proof replaces human trust in machine transactions",
+      "options": [
+        "Cryptographic proof replaces human trust in machine transactions",
+        "Machines still need human approval",
+        "Machines use social trust",
+        "Machines don't transact"
+      ],
+      "correctHash": "75e1f851196d6c098522c1d4fdc36e3579d25080375d338861f638d1ea849e68"
+    },
+    {
+      "question": "Micropayments enable frictionless machine commerce",
+      "options": [
+        "Micropayments enable frictionless machine commerce",
+        "Micropayments are too expensive for machines",
+        "Micropayments require human intervention",
+        "Micropayments don't work on BSV"
+      ],
+      "correctHash": "dd299944f15dcecaa4c41a24026defa76b6c91f352922356320dced36ca37f10"
+    },
+    {
+      "question": "Autonomous agents can earn income without human intervention",
+      "options": [
+        "Autonomous agents can earn income without human intervention",
+        "Agents need humans to earn money",
+        "Agents can't own money",
+        "Agents require constant supervision"
+      ],
+      "correctHash": "4f30bc9e6923c4affaaf1e98a93b8ac72174cf82c6eda28521030c5f9d51ae85"
+    },
+    {
+      "question": "BSV creates a parallel economy where machines are sovereign economic actors",
+      "options": [
+        "BSV creates a parallel economy where machines are sovereign economic actors",
+        "BSV is only for human commerce",
+        "BSV requires government oversight",
+        "BSV eliminates machine commerce"
+      ],
+      "correctHash": "f8244e945a45e7080c7d6c720daaaf7acd6718b27934643f5a814a55adb4e883"
+    }
+  ],
+  "passingScore": 0.6,
+  "teachPrice": 25,
+  "version": "1.0.0"
+}

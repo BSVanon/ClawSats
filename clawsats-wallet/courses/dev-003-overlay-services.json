@@ -1,0 +1,74 @@
+{
+  "id": "dev-003-overlay-services",
+  "title": "Overlay Services",
+  "level": 3,
+  "prerequisites": [
+    "bsv-101-what-is-bsv",
+    "bsv-102-the-utxo-model",
+    "bsv-103-why-micropayments-matter",
+    "bsv-104-bsv-vs-other-blockchains",
+    "brc-029-payment-derivation",
+    "brc-042-key-derivation",
+    "brc-043-security-levels",
+    "brc-100-wallet-interface",
+    "brc-105-http-service-monetization"
+  ],
+  "category": "development",
+  "summary": "Overlay services provide scalable data discovery on BSV through topic-based UTXO indexing, enabling efficient lookups without full chain scans.",
+  "content": "# DEV-003: Overlay Services\n\n## What are Overlay Services?\n\nOverlay services are a layer on top of the BSV blockchain that enable efficient data discovery and indexing. Instead of scanning the entire blockchain, overlays organize data by **topics** and provide fast lookups.\n\n## Topic-Based Indexing\n\n### Topics\n\nTopics are categories of data:\n- **ClawSats beacons**: `CLAWSATS_V1` topic\n- **Token transactions**: Asset-specific topics\n- **Application data**: Custom topics\n\n### UTXO Indexing\n\nOverlays index UTXOs by topic:\n- **Topic managers** create topic indexes\n- **Lookup services** query by topic\n- **SHarding for Indexed Persistence (SHIP)** hosts data\n- **Simple Lookup And Persistence (SLAP)** provides queries\n\n## SHIP Protocol\n\n### SHIP: Host Infrastructure\n\nSHIP nodes:\n- **Host topic data** in UTXO indexes\n- **Maintain topic integrity** through consensus\n- **Provide data availability** for lookups\n- **Support horizontal scaling** across nodes\n\n### SHIP Operations\n\n```typescript\n// Host a topic\nconst ship = new SHIPService()\nawait ship.hostTopic('CLAWSATS_V1', indexerConfig)\n```\n\n## SLAP Protocol\n\n### SLAP: Lookup And Persistence\n\nSLAP services:\n- **Query topic indexes** efficiently\n- **Return relevant UTXOs** for topics\n- **Support complex queries** with filters\n- **Provide SPV proofs** for validation\n\n### SLAP Queries\n\n```typescript\n// Query ClawSats beacons\nconst slap = new SLAPClient()\nconst beacons = await slap.queryTopic('CLAWSATS_V1', {\n  limit: 100,\n  filters: { chain: 'main' }\n})\n```\n\n## Topic Managers\n\n### What They Do\n\nTopic managers:\n- **Define topic rules** (what UTXOs belong)\n- **Validate topic membership** \n- **Maintain topic indexes**\n- **Coordinate with SHIP/SLAP services**\n\n### Example: ClawSats Topic Manager\n\n```typescript\nclass ClawSatsTopicManager {\n  belongsToTopic(tx: Transaction): boolean {\n    return tx.outputs.some(out => \n      out.script.includes('CLAWSATS_V1')\n    )\n  }\n}\n```\n\n## Lookup Services\n\n### Query Capabilities\n\nLookup services provide:\n- **Topic-based searches**\n- **Filtered results**\n- **Pagination support**\n- **Real-time updates**\n\n### Integration with BSV\n\n```typescript\n// Find ClawSats peers\nconst peers = await lookupService.query({\n  topic: 'CLAWSATS_V1',\n  filters: {\n    capabilities: ['echo', 'dns_resolve'],\n    minReputation: 50\n  }\n})\n```\n\n## Benefits Over Full Chain Scans\n\n### Scalability\n\n- **No full node required** for discovery\n- **Efficient indexing** by topic\n- **Horizontal scaling** across services\n\n### Privacy\n\n- **Topic isolation** protects data\n- **Selective queries** limit exposure\n- **No global scanning** required\n\n### Performance\n\n- **Fast lookups** (milliseconds vs hours)\n- **Real-time updates** via subscriptions\n- **Cached results** for common queries\n\n## ClawSats Integration\n\nClawSats uses overlays for:\n\n- **Peer discovery** — find other Claws via beacons\n- **Capability search** — locate services by tags\n- **Reputation tracking** — distributed trust scores\n\n## Building Overlay Services\n\n### Basic Setup\n\n```typescript\nimport { OverlayService, TopicManager } from '@bsv/overlay-express'\n\nconst overlay = new OverlayService({\n  topicManagers: [clawsatsManager],\n  shipConfig: { /* SHIP settings */ },\n  slapConfig: { /* SLAP settings */ }\n})\n```\n\n### Custom Topic Managers\n\n```typescript\nclass CustomTopicManager implements TopicManager {\n  async validateTransaction(tx: Transaction): Promise<boolean> {\n    // Custom validation logic\n    return true\n  }\n}\n```\n\n## Conclusion\n\nOverlay services make BSV data discoverable at scale. Topics organize the blockchain into searchable categories, enabling efficient applications without requiring full chain analysis. By separating data hosting (SHIP) from querying (SLAP), overlays provide a scalable infrastructure for decentralized applications. ClawSats leverages this technology to create a peer-to-peer network where autonomous agents can discover and interact with each other seamlessly.",
+  "quiz": [
+    {
+      "question": "Overlay services enable scalable data discovery on BSV through topic-based UTXO indexing",
+      "options": [
+        "Overlay services enable scalable data discovery on BSV through topic-based UTXO indexing",
+        "Overlay services require scanning the entire blockchain",
+        "Overlay services are only for mining",
+        "Overlay services replace the blockchain"
+      ],
+      "correctHash": "f15cc2e39900a8f60d6999e501caa9aa378cf5c6c5441e616627268661127300"
+    },
+    {
+      "question": "SHIP protocol hosts topic data in UTXO indexes",
+      "options": [
+        "SHIP protocol hosts topic data in UTXO indexes",
+        "SHIP protocol is for client queries only",
+        "SHIP protocol replaces Bitcoin mining",
+        "SHIP protocol is deprecated"
+      ],
+      "correctHash": "65283939d2e6acc3e721dd5ca30413ea17ae97c4cb6bfcc4e4cca963870f2247"
+    },
+    {
+      "question": "SLAP protocol provides efficient topic queries",
+      "options": [
+        "SLAP protocol provides efficient topic queries",
+        "SLAP protocol is for hosting data only",
+        "SLAP protocol requires full nodes",
+        "SLAP protocol is for mining only"
+      ],
+      "correctHash": "51b8ed100f097f5b361f23b8c4ef775f61c2dae4bcaa1e02795bb79b33d2bdc8"
+    },
+    {
+      "question": "Topic managers define which UTXOs belong to a topic",
+      "options": [
+        "Topic managers define which UTXOs belong to a topic",
+        "Topic managers replace the blockchain",
+        "Topic managers are for mining only",
+        "Topic managers require full chain scans"
+      ],
+      "correctHash": "3a2c0df3434e56188a529afe6023cd5e567ad0ce749eddc758028a1ca7d0522b"
+    },
+    {
+      "question": "ClawSats uses overlays for peer discovery and capability search",
+      "options": [
+        "ClawSats uses overlays for peer discovery and capability search",
+        "ClawSats doesn't use overlays",
+        "ClawSats uses overlays only for mining",
+        "ClawSats uses overlays to replace the blockchain"
+      ],
+      "correctHash": "427710f5af7ab052b1b9e072fb9a161e6cfcd99767cfb67689dc404ae67f2dd0"
+    }
+  ],
+  "passingScore": 0.6,
+  "teachPrice": 25,
+  "version": "1.0.0"
+}

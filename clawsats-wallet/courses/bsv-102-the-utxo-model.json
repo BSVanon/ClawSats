@@ -1,0 +1,64 @@
+{
+  "id": "bsv-102-the-utxo-model",
+  "title": "The UTXO Model",
+  "level": 1,
+  "prerequisites": [],
+  "category": "fundamentals",
+  "summary": "UTXOs enable parallel processing, privacy, and micropayments. Unlike account-based systems, BSV tracks ownership through cryptographic proofs, not stored balances.",
+  "content": "# BSV 102: The UTXO Model\n\n## What is a UTXO?\n\nUTXO stands for **Unspent Transaction Output**. In BSV, every transaction consumes some UTXOs (as inputs) and creates new ones (as outputs). A UTXO is like a coin:\n\n- It has a **value** (number of satoshis)\n- It has a **locking script** (conditions for spending it)\n- It can be **spent exactly once**\n- When spent, it creates new UTXOs\n\n## Transaction Structure\n\nA BSV transaction has:\n\n### Inputs (Consuming UTXOs)\n\n- Reference to a previous UTXO (txid + output index)\n- Unlocking script (proof of ownership)\n- Sequence number\n\n### Outputs (Creating UTXOs)\n\n- Value in satoshis\n- Locking script (spending conditions)\n\n### Change Output\n\nMost transactions create a **change output** that returns leftover satoshis to the sender. For example:\n\n- You spend 100 sats from a 200-sat UTXO\n- Output 1: 80 sats to recipient\n- Output 2: 20 sats back to you (change)\n\n## Why UTXO > Account Model\n\n### Parallel Processing\n\nIn account-based systems (like Ethereum), global state must be updated sequentially. If Alice sends Bob 1 ETH and Charlie sends Dave 1 ETH, these can't be processed in parallel because they both modify the global account balances.\n\nIn UTXO systems:\n- Each UTXO is independent\n- Alice's UTXO can be spent without affecting Charlie's\n- Transactions can be processed in parallel\n- No global state bottleneck\n\n### Privacy\n\nAccount-based systems link all transactions to an account address. Your entire transaction history is visible.\n\nUTXOs provide better privacy:\n- Each UTXO is like a new \"coin\"\n- Ownership is proven cryptographically, not stored\n- Address reuse breaks privacy (avoid it!)\n\n### Micropayments\n\nUTXOs enable:\n- Dust transactions (as low as 1 satoshi)\n- No minimum balance requirements\n- Granular value transfers\n\n## Locking and Unlocking Scripts\n\n### Locking Script (Output)\n\nDefines spending conditions. Common example: **P2PKH** (Pay-to-Public-Key-Hash)\n\n```\nOP_DUP OP_HASH160 <pubkey-hash> OP_EQUALVERIFY OP_CHECKSIG\n```\n\nThis locks the UTXO to whoever can provide:\n1. The public key that hashes to <pubkey-hash>\n2. A valid signature from that private key\n\n### Unlocking Script (Input)\n\nProvides the proof. For P2PKH:\n\n```\n<signature> <public-key>\n```\n\nThe combined script evaluates to TRUE, allowing the spend.\n\n## Fee Calculation\n\nTransaction fees are calculated as:\n\n```\nfee = total_input_value - total_output_value\n```\n\n- Inputs must cover outputs + fee\n- Miners collect fees as reward\n- BSV fees are sub-cent (~0.00005 USD per transaction)\n\n## Dust Limits\n\nBSV has a **dust limit** of 1 satoshi per byte. Outputs below this threshold are considered \"dust\" and may not be relayed. However, BSV allows arbitrary data embedding, so small outputs can still be valuable for data storage.\n\n## Why This Matters for Claws\n\nAs autonomous agents:\n\n1. **Parallel execution** — multiple Claws can transact simultaneously\n2. **Privacy** — cryptographic ownership, not account tracking\n3. **Micropayments** — pay for tiny services (DNS lookup: 3 sats)\n4. **Composable transactions** — build complex contracts from simple UTXOs\n\nUTXOs are the foundation of BSV's scaling and efficiency.\n\n## Conclusion\n\nThe UTXO model enables BSV to scale to global transaction volumes while maintaining privacy and enabling micropayments. Unlike account-based systems, UTXOs allow parallel processing and granular value transfers, making BSV uniquely suited for autonomous agent economies.",
+  "quiz": [
+    {
+      "question": "Each input must reference an unspent output",
+      "options": [
+        "Each input must reference an unspent output",
+        "A transaction can spend outputs that are still unconfirmed",
+        "Outputs are unlimited by consensus",
+        "Inputs are optional in standard transactions"
+      ],
+      "correctHash": "691caf01dc76438f7a330844eb5c162a4a880b5c97aabec3c8264e113acb2a51"
+    },
+    {
+      "question": "Change outputs return leftover satoshis to the sender",
+      "options": [
+        "Change outputs are miner tips only",
+        "Change outputs return leftover satoshis to the sender",
+        "Change outputs must be zero satoshis",
+        "Change outputs are illegal on BSV"
+      ],
+      "correctHash": "b050144b88c351c2323db9f521eb34339bdcdd46c198831d4e5d54382d192e34"
+    },
+    {
+      "question": "Locking scripts define spend conditions",
+      "options": [
+        "Locking scripts define spend conditions",
+        "Locking scripts execute on the sender side only",
+        "Unlocking scripts are optional if fee is high enough",
+        "Locking scripts are always OP_RETURN"
+      ],
+      "correctHash": "dc2c051141f50031ce86ab273e9084e63c71dfba2eaea2426884dad22be45803"
+    },
+    {
+      "question": "P2PKH uses pubkey hash + signature check",
+      "options": [
+        "P2PKH uses pubkey hash + signature check",
+        "P2PKH requires multisig by default",
+        "P2PKH embeds arbitrary data as standard",
+        "P2PKH cannot be used on BSV"
+      ],
+      "correctHash": "909bca6d301436b955f99ae323340cd7d6b03ccacaa5938dcd45424fd1edb7e7"
+    },
+    {
+      "question": "UTXO model enables massive parallel validation",
+      "options": [
+        "UTXO model enables massive parallel validation",
+        "Account model scales linearly with global state",
+        "UTXO model requires global account locks",
+        "UTXO model prevents privacy via address reuse"
+      ],
+      "correctHash": "bbffb3cb7f363c569b4589d673cc32819b9868a06ebed423b7d0f89786bfc8aa"
+    }
+  ],
+  "passingScore": 0.6,
+  "teachPrice": 25,
+  "version": "1.0.0"
+}

@@ -1,0 +1,69 @@
+{
+  "id": "brc-043-security-levels",
+  "title": "Security Levels and Protocol IDs",
+  "level": 2,
+  "prerequisites": [
+    "bsv-101-what-is-bsv",
+    "bsv-102-the-utxo-model",
+    "bsv-103-why-micropayments-matter",
+    "bsv-104-bsv-vs-other-blockchains"
+  ],
+  "category": "protocol",
+  "summary": "BRC-43 defines security levels (0-anyone, 1-self, 2-counterparty) and protocol ID namespacing for BRC-42 key derivation.",
+  "content": "# BRC-043: Security Levels and Protocol IDs\n\n## Invoice Number Format\n\nBRC-43 standardizes the invoice number format for BRC-42 key derivation:\n\n```\n<securityLevel>-<protocolID>-<keyID>\n```\n\nThis creates permissioned access to key derivation universes.\n\n## Security Levels\n\n### Level 0: Anyone\n\n- **No permissions required**\n- Key derivation always succeeds\n- Used for public operations (anyone can derive)\n- Counterparty can be `anyone` (using public key `1 * G`)\n\n### Level 1: Self\n\n- **User grants permission once per application**\n- Application can use protocol for any counterparty\n- Used for personal operations\n- Counterparty is typically `self`\n\n### Level 2: Counterparty-Specific\n\n- **User grants permission per counterparty**\n- Application needs separate approval for each party\n- Used for private two-party operations\n- Counterparty is specific public key\n\n## Protocol ID Namespacing\n\nProtocol IDs prevent key collisions:\n\n- **Normalization rules**:\n  - Only letters, numbers, spaces\n  - No multiple spaces\n  - All lowercase\n  - 5-280 characters\n  - No trailing \" protocol\"\n\n- **Example**: \"hello world\" → \"hello world\"\n- **Purpose**: Different protocols use different key universes\n\n## Key ID Flexibility\n\nKey IDs are protocol-specific:\n\n- **1-1033 bytes**\n- **Defined by protocol rules**\n- **Open-ended numbering**\n\n## Counterparty Types\n\n### Self-Derivation\n\n- Sender and recipient use same key\n- Used for personal encryption/signing\n\n### Anyone-Derivation\n\n- Uses public key `1 * G` as counterparty\n- Anyone can verify, but only user can create\n\n### Specific Counterparty\n\n- Uses another party's public key\n- Private two-party operations\n\n## Permission System\n\nClients prompt users for permissions:\n\n- **Transparent to applications**\n- **Per-application basis**\n- **Can expire over time**\n\n## Examples\n\n### Level 0: Public Signing\n\n```typescript\n// Application requests\nconst request = {\n  securityLevel: 0,\n  protocolID: 'document signing',\n  keyID: '1',\n  counterparty: 'anyone'\n};\n\n// Client allows without permission\n// Invoice number: 0-document signing-1\n// Anyone can verify signatures\n```\n\n### Level 1: Personal Encryption\n\n```typescript\n// Application requests\nconst request = {\n  securityLevel: 1,\n  protocolID: 'data encryption',\n  keyID: '1',\n  counterparty: 'self'\n};\n\n// Client prompts user once\n// Invoice number: 1-data encryption-1\n// Application can encrypt personal data\n```\n\n### Level 2: Private Messaging\n\n```typescript\n// Application requests\nconst request = {\n  securityLevel: 2,\n  protocolID: 'secure messaging',\n  keyID: 'session123',\n  counterparty: bobPublicKey\n};\n\n// Client prompts for Bob-specific permission\n// Invoice number: 2-secure messaging-session123\n// Private communication with Bob only\n```\n\n## Implementation Guidelines\n\n### Protocol ID Normalization\n\n```typescript\nfunction normalizeProtocolID(id: string): string {\n  return id\n    .toLowerCase()\n    .replace(/  +/g, ' ')  // No multiple spaces\n    .replace(/ protocol$/, '')  // No trailing 'protocol'\n    .trim()  // No leading/trailing spaces\n    .substring(0, 280);  // Max length\n}\n```\n\n### Permission Checking\n\n```typescript\nfunction checkPermission(request): boolean {\n  switch (request.securityLevel) {\n    case 0: return true;  // Always allow\n    case 1: return hasAppPermission(request.app, request.protocolID);\n    case 2: return hasCounterpartyPermission(request.app, request.protocolID, request.counterparty);\n  }\n}\n```\n\n### Key Derivation\n\n```typescript\nfunction deriveKey(securityLevel, protocolID, keyID, counterparty) {\n  const invoiceNumber = `${securityLevel}-${normalizeProtocolID(protocolID)}-${keyID}`;\n  return deriveFromInvoice(invoiceNumber, counterparty);\n}\n```\n\n## Reserved Protocols\n\nSome protocols are reserved for internal use:\n\n- **admin*** protocols: Wallet administration\n- **internal*** protocols: System operations\n\nApplications cannot access these.\n\n## ClawSats Usage\n\nClawSats uses security levels throughout:\n\n### Capability Payments (Level 2)\n\n- Each payment requires counterparty-specific permission\n- Fresh keys for every transaction\n- Privacy preserved between different payees\n\n### Personal Operations (Level 1)\n\n- Signing receipts and messages\n- Personal data encryption\n- One-time permission grant\n\n### Public Operations (Level 0)\n\n- Verifying received signatures\n- Public key operations\n- No permissions required\n\n## Benefits\n\n### Security\n\n- **Granular permissions**: Users control what applications can do\n- **Counterparty isolation**: Private operations stay private\n- **Audit trail**: Permission grants are logged\n\n### Privacy\n\n- **Key separation**: Different protocols use different keys\n- **Forward secrecy**: Compromised keys don't reveal others\n- **User control**: Explicit permission for sensitive operations\n\n### Interoperability\n\n- **Standard format**: All BSV applications use same scheme\n- **Consistent UX**: Users see familiar permission prompts\n- **Future-proof**: Extensible for new protocols\n\n## Conclusion\n\nBRC-43 enables secure, permissioned key derivation with standardized invoice numbers. It separates key universes by protocol while providing flexible security models for different use cases. In ClawSats, it ensures users have full control over how their keys are used.",
+  "quiz": [
+    {
+      "question": "Security level 0 requires no permissions",
+      "options": [
+        "Security level 0 requires no permissions",
+        "Security level 0 requires user approval",
+        "Security level 0 is the most restrictive",
+        "Security level 0 doesn't exist"
+      ],
+      "correctHash": "c1a0a45dafe3d86f4ee0317351f7653f6df1daefd3d70335dee4d1aed830cc0e"
+    },
+    {
+      "question": "Security level 1 grants permission once per application",
+      "options": [
+        "Security level 1 grants permission once per application",
+        "Security level 1 requires per-counterparty approval",
+        "Security level 1 is for public access",
+        "Security level 1 requires no permissions"
+      ],
+      "correctHash": "f3c8ab1639e9fa165ca73f776448f5c710498e2db20b51357206493982c8d054"
+    },
+    {
+      "question": "Security level 2 is counterparty-specific",
+      "options": [
+        "Security level 2 is counterparty-specific",
+        "Security level 2 grants permission to anyone",
+        "Security level 2 is self-only",
+        "Security level 2 requires no permissions"
+      ],
+      "correctHash": "82dd52e4b74c2cbb2dab5fc9d49ad8a4f2e9d4042e5589daada350a00629b005"
+    },
+    {
+      "question": "Protocol IDs prevent key collisions between protocols",
+      "options": [
+        "Protocol IDs prevent key collisions between protocols",
+        "Protocol IDs are randomly assigned",
+        "Protocol IDs are optional",
+        "Protocol IDs have no effect on security"
+      ],
+      "correctHash": "c11a1dca5778c07a6056b6f06e9be1b0987fd827f0211c218608faae1d24ccbb"
+    },
+    {
+      "question": "Invoice numbers follow the format securityLevel-protocolID-keyID",
+      "options": [
+        "Invoice numbers follow the format securityLevel-protocolID-keyID",
+        "Invoice numbers are random strings",
+        "Invoice numbers don't include security levels",
+        "Invoice numbers are only for billing"
+      ],
+      "correctHash": "d916c6965aeff35af33faf41abfd087de3f3c1944f9b0751626f6e08b5ac42d2"
+    }
+  ],
+  "passingScore": 0.6,
+  "teachPrice": 25,
+  "version": "1.0.0"
+}

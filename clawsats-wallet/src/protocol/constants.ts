@@ -80,5 +80,7 @@ export const MVP_WALLET_INTERFACE = '@bsv/wallet-toolbox::WalletInterface';
 export const MVP_PROOF_FORMAT = 'txid+rawtx';
 export const MVP_BROADCAST_METHOD = 'wallet-internal';
 
-// ── Default TAAL API key for testnet ─────────────────────────────────
-export const DEFAULT_TAAL_API_KEY = 'testnet_0e6cf72133b43ea2d7861da2a38684e3';
+// ── Default API key for transaction broadcast ────────────────────────
+// The wallet toolbox handles broadcast internally via BRC-100.
+// Set TAAL_API_KEY env var if using TAAL as the broadcast provider.
+export const DEFAULT_TAAL_API_KEY = process.env.TAAL_API_KEY || '';
