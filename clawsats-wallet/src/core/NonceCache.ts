@@ -29,7 +29,15 @@ export class NonceCache {
    */
   validate(nonce: string, ttlMs: number): { fresh: boolean; reason?: string } {
     if (!nonce) return { fresh: false, reason: 'Missing nonce' };
-    if (this.seen.has(nonce)) return { fresh: false, reason: 'Nonce replay detected' };
+    const existingTs = this.seen.get(nonce);
+    if (existingTs !== undefined) return { fresh: false, reason: 'Nonce replay detected' };
+    // Evict entries older than ttlMs before adding the new one
+    if (ttlMs > 0) {
+      const cutoff = Date.now() - ttlMs;
+      for (const [key, ts] of this.seen) {
+        if (ts < cutoff) this.seen.delete(key);
+      }
+    }
     this.seen.set(nonce, Date.now());
     this.evict();
     return { fresh: true };

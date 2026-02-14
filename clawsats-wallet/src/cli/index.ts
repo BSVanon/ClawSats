@@ -322,7 +322,7 @@ program
           description: 'ClawSats beacon announcement',
           outputs: [{
             satoshis: 0,
-            script: opReturnScript,
+            lockingScript: opReturnScript,
             outputDescription: 'CLAWSATS_V1 beacon'
           }],
           labels: ['clawsats-beacon'],
@@ -404,7 +404,7 @@ program
           const opReturnScript = buildOpReturnScript('CLAWSATS_V1', beaconPayload);
           const result = await wallet.createAction({
             description: 'ClawSats beacon',
-            outputs: [{ satoshis: 0, script: opReturnScript, outputDescription: 'CLAWSATS_V1 beacon' }],
+            outputs: [{ satoshis: 0, lockingScript: opReturnScript, outputDescription: 'CLAWSATS_V1 beacon' }],
             labels: ['clawsats-beacon'],
             options: { signAndProcess: true, acceptDelayedBroadcast: true }
           });

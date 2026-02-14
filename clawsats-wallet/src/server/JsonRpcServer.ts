@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import http from 'http';
-import { randomBytes } from 'crypto';
+import { randomBytes, createHash } from 'crypto';
 import { JSONRPCServer } from 'json-rpc-2.0';
 import { WalletManager } from '../core/WalletManager';
 import { PeerRegistry } from '../core/PeerRegistry';
@@ -11,7 +11,7 @@ import { RateLimiter } from '../core/RateLimiter';
 import { SharingProtocol } from '../protocol';
 import { INVITE_MAX_PER_HOUR, FEE_SATS, FEE_IDENTITY_KEY } from '../protocol/constants';
 import { ServeOptions, Invitation, PeerRecord } from '../types';
-import { log, logWarn, logError } from '../utils';
+import { log, logWarn, logError, canonicalJson } from '../utils';
 
 const TAG = 'server';
 
@@ -24,6 +24,7 @@ export class JsonRpcServer {
   private capabilityRegistry: CapabilityRegistry;
   private nonceCache: NonceCache;
   private inviteRateLimiter: RateLimiter;
+  private paymentDedupeCache: Set<string> = new Set();
   private port: number;
   private host: string;
   private apiKey?: string;
@@ -260,24 +261,36 @@ export class JsonRpcServer {
           return;
         }
 
-        // Cryptographic signature verification on invitation
-        if (invitation.signature) {
-          try {
-            const { signature, ...rest } = invitation as any;
-            const payload = JSON.stringify(rest);
-            const result = await wallet.verifySignature({
-              data: Array.from(Buffer.from(payload, 'utf8')),
-              signature: Array.from(Buffer.from(signature, 'base64')),
-              protocolID: [0, 'clawsats-sharing'],
-              keyID: 'sharing-v1',
-              counterparty: invitation.sender.identityKey
-            });
-            if (!result.valid) {
-              logWarn(TAG, `Invitation signature invalid from ${senderKey.substring(0, 12)}...`);
-            }
-          } catch {
-            logWarn(TAG, `Invitation signature verification error from ${senderKey.substring(0, 12)}...`);
+        // Cryptographic signature verification on invitation — ENFORCING
+        if (!invitation.signature) {
+          res.status(400).json({ error: 'Missing signature on invitation' });
+          return;
+        }
+        try {
+          const { signature, ...rest } = invitation as any;
+          const payload = canonicalJson(rest);
+          const result = await wallet.verifySignature({
+            data: Array.from(Buffer.from(payload, 'utf8')),
+            signature: Array.from(Buffer.from(signature, 'base64')),
+            protocolID: [0, 'clawsats-sharing'],
+            keyID: 'sharing-v1',
+            counterparty: invitation.sender.identityKey
+          });
+          if (!result.valid) {
+            logWarn(TAG, `Invitation signature REJECTED from ${senderKey.substring(0, 12)}...`);
+            res.status(403).json({ error: 'Invalid invitation signature' });
+            return;
           }
+        } catch (sigErr) {
+          logWarn(TAG, `Invitation signature verification error from ${senderKey.substring(0, 12)}...`);
+          res.status(403).json({ error: 'Signature verification failed' });
+          return;
+        }
+
+        // Validate sender endpoint to prevent SSRF (Finding 8)
+        if (invitation.sender.endpoint && !this.isValidPeerEndpoint(invitation.sender.endpoint)) {
+          res.status(400).json({ error: 'Invalid sender endpoint URL' });
+          return;
         }
 
         // Register sender as a known peer
@@ -325,37 +338,50 @@ export class JsonRpcServer {
           return;
         }
 
-        // Signature verification: if signature is present, verify it
+        // Signature verification — ENFORCING
+        if (!announcement.signature || announcement.signature === '') {
+          res.status(400).json({ error: 'Missing signature on announcement' });
+          return;
+        }
         let verified = false;
-        if (announcement.signature && announcement.signature !== '') {
-          try {
-            const wallet = this.walletManager.getWallet();
-            const { signature, ...rest } = announcement;
-            const payload = JSON.stringify(rest);
-            const result = await wallet.verifySignature({
-              data: Array.from(Buffer.from(payload, 'utf8')),
-              signature: Array.from(Buffer.from(signature, 'base64')),
-              protocolID: [0, 'clawsats-sharing'],
-              keyID: 'sharing-v1',
-              counterparty: announcement.identityKey
-            });
-            verified = result.valid === true;
-            if (!verified) {
-              logWarn(TAG, `Announcement signature invalid from ${announcement.identityKey.substring(0, 12)}...`);
-            }
-          } catch {
-            logWarn(TAG, `Announcement signature verification error from ${announcement.identityKey.substring(0, 12)}...`);
+        try {
+          const wallet = this.walletManager.getWallet();
+          const { signature, ...rest } = announcement;
+          const payload = canonicalJson(rest);
+          const result = await wallet.verifySignature({
+            data: Array.from(Buffer.from(payload, 'utf8')),
+            signature: Array.from(Buffer.from(signature, 'base64')),
+            protocolID: [0, 'clawsats-sharing'],
+            keyID: 'sharing-v1',
+            counterparty: announcement.identityKey
+          });
+          verified = result.valid === true;
+          if (!verified) {
+            logWarn(TAG, `Announcement signature REJECTED from ${announcement.identityKey.substring(0, 12)}...`);
+            res.status(403).json({ error: 'Invalid announcement signature' });
+            return;
           }
+        } catch {
+          logWarn(TAG, `Announcement signature verification error from ${announcement.identityKey.substring(0, 12)}...`);
+          res.status(403).json({ error: 'Signature verification failed' });
+          return;
+        }
+
+        // Validate endpoint URL to prevent SSRF (Finding 8)
+        const peerEndpoint = announcement.capabilities?.[0]?.endpoint || '';
+        if (peerEndpoint && !this.isValidPeerEndpoint(peerEndpoint)) {
+          res.status(400).json({ error: 'Invalid peer endpoint URL' });
+          return;
         }
 
         const peer: PeerRecord = {
           clawId: announcement.clawId || `claw://${announcement.identityKey.substring(0, 16)}`,
           identityKey: announcement.identityKey,
-          endpoint: announcement.capabilities?.[0]?.endpoint || '',
+          endpoint: peerEndpoint,
           capabilities: announcement.capabilities?.map((c: any) => c.name) || [],
           chain: announcement.networkInfo?.chain || 'test',
           lastSeen: new Date().toISOString(),
-          reputation: verified ? 40 : 15
+          reputation: 40
         };
         this.peerRegistry.addPeer(peer);
 
@@ -440,13 +466,26 @@ export class JsonRpcServer {
         const senderIdentityKey = req.headers['x-bsv-identity-key'] as string || '';
         log(TAG, `Payment received for ${capName} from ${senderIdentityKey.substring(0, 16) || 'unknown'}...`);
 
+        // PAYMENT REPLAY PROTECTION (Finding 2): hash the payment data to create a dedupe key.
+        // If we've seen this exact payment before, reject it.
+        const txHash = createHash('sha256').update(paymentData.transaction).digest('hex');
+        if (this.paymentDedupeCache.has(txHash)) {
+          logWarn(TAG, `Payment replay detected for ${capName}: ${txHash.substring(0, 16)}...`);
+          res.status(402).json({
+            status: 'error',
+            code: 'ERR_PAYMENT_REPLAY',
+            description: 'This payment has already been used. Send a new payment.'
+          });
+          return;
+        }
+
         // STRICT PAYMENT GATE: internalize output 0 (provider's payment) via BRC-105 §6.4.
         // If internalizeAction fails, the payment is invalid — DO NOT execute the capability.
         // This prevents attackers from sending garbage payments and getting free work.
         const wallet = this.walletManager.getWallet();
         const txBytes = Array.from(Buffer.from(paymentData.transaction, 'base64'));
         try {
-          await wallet.internalizeAction({
+          const internResult = await wallet.internalizeAction({
             tx: txBytes,
             outputs: [{
               outputIndex: 0,
@@ -459,6 +498,32 @@ export class JsonRpcServer {
             }],
             description: `ClawSats payment for ${capName} (${cap.pricePerCall} sats + ${FEE_SATS} sat fee)`
           });
+
+          // AMOUNT VERIFICATION (Finding 1): check that the internalized output
+          // actually covers the capability price. internalizeAction succeeds if the
+          // script matches, but doesn't enforce amount — we must check it ourselves.
+          if (internResult && typeof internResult.accepted === 'object') {
+            // If the wallet returns output details, verify amount
+            const acceptedSats = internResult.accepted?.satoshis;
+            if (typeof acceptedSats === 'number' && acceptedSats < cap.pricePerCall) {
+              logWarn(TAG, `Underpayment for ${capName}: got ${acceptedSats}, need ${cap.pricePerCall}`);
+              res.status(402).json({
+                status: 'error',
+                code: 'ERR_UNDERPAYMENT',
+                description: `Payment too low: received ${acceptedSats} sats, need ${cap.pricePerCall}.`
+              });
+              return;
+            }
+          }
+
+          // Mark this payment as used AFTER successful internalization
+          this.paymentDedupeCache.add(txHash);
+          // Cap the dedupe cache size to prevent unbounded memory growth
+          if (this.paymentDedupeCache.size > 10000) {
+            const first = this.paymentDedupeCache.values().next().value;
+            if (first) this.paymentDedupeCache.delete(first);
+          }
+
           log(TAG, `Auto-accepted payment for ${capName}: ${cap.pricePerCall} sats claimed`);
         } catch (internErr) {
           // Payment verification FAILED — reject the request.
@@ -681,5 +746,33 @@ export class JsonRpcServer {
       port: this.port,
       apiKey: !!this.apiKey
     };
+  }
+
+  /**
+   * Validate a peer endpoint URL to prevent SSRF attacks (Finding 8).
+   * Only allows http/https URLs pointing to public routable addresses.
+   * Blocks localhost, private IPs, link-local, and non-http schemes.
+   */
+  private isValidPeerEndpoint(endpoint: string): boolean {
+    try {
+      const url = new URL(endpoint);
+      // Only allow http/https
+      if (url.protocol !== 'http:' && url.protocol !== 'https:') return false;
+      const hostname = url.hostname.toLowerCase();
+      // Block localhost and loopback
+      if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1') return false;
+      // Block private IP ranges
+      if (hostname.startsWith('10.') || hostname.startsWith('192.168.')) return false;
+      if (/^172\.(1[6-9]|2[0-9]|3[01])\./.test(hostname)) return false;
+      // Block link-local
+      if (hostname.startsWith('169.254.')) return false;
+      // Block metadata endpoints (cloud SSRF)
+      if (hostname === '169.254.169.254') return false;
+      // Block 0.0.0.0
+      if (hostname === '0.0.0.0') return false;
+      return true;
+    } catch {
+      return false;
+    }
   }
 }

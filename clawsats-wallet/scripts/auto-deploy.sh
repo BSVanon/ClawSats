@@ -175,25 +175,22 @@ configure_wallet() {
         fi
     fi
     
-    # Generate configuration if not downloaded
+    # Generate wallet config using the CLI (creates rootKeyHex, identity key, SQLite DB)
     if [[ ! -f "$config_dir/wallet-config.json" ]]; then
-        log_info "Generating default configuration..."
-        cat > "$config_dir/wallet-config.json" << EOF
-{
-  "clawId": "$CLAW_ID",
-  "chain": "$DEFAULT_CHAIN",
-  "port": $DEFAULT_PORT,
-  "endpoints": {
-    "jsonrpc": "http://localhost:$DEFAULT_PORT",
-    "health": "http://localhost:$DEFAULT_PORT/health",
-    "discovery": "http://localhost:$DEFAULT_PORT/discovery"
-  },
-  "invitationToken": "$INVITATION_TOKEN",
-  "autoFund": true,
-  "enableDiscovery": true,
-  "apiKey": "$(openssl rand -hex 32 2>/dev/null || echo "default-key-$(date +%s)")"
-}
-EOF
+        log_info "Generating wallet via CLI (creates rootKeyHex + identity key)..."
+        cd "$DEFAULT_INSTALL_DIR"
+        /usr/bin/node clawsats-wallet/dist/cli/index.js create \
+            --name "$CLAW_ID" \
+            --chain "$DEFAULT_CHAIN" \
+            --storage sqlite
+        # Move generated config to the data directory
+        if [[ -f "$DEFAULT_INSTALL_DIR/config/wallet-config.json" ]]; then
+            mv "$DEFAULT_INSTALL_DIR/config/wallet-config.json" "$config_dir/wallet-config.json"
+            log_success "Wallet config generated with proper rootKeyHex"
+        else
+            log_error "CLI did not generate wallet-config.json"
+            return 1
+        fi
     fi
     
     # Set permissions

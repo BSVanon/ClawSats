@@ -180,22 +180,27 @@ export class WalletManager {
       return false;
     }
 
+    // Search both the payer label ('clawsats-payment') and legacy label ('payment')
     const actions = await wallet.listActions({
-      labels: ['payment'],
-      limit: 100,
+      labels: ['clawsats-payment', 'payment'],
+      limit: 200,
       includeOutputs: true
     });
 
-    const action = actions.actions.find(a => a.txid === txid);
+    const action = actions.actions?.find((a: any) => a.txid === txid);
     if (!action || !action.outputs) {
       return false;
     }
 
+    // Verify output amounts match expectations.
+    // NOTE: This is a soft check — full verification requires checking
+    // that output scripts derive from the correct identity keys via BRC-29.
+    // The primary enforcement is internalizeAction in the 402 flow.
     const hasProviderAmount = action.outputs.some(
-      output => output.satoshis === providerOutput.amount
+      (output: any) => output.satoshis === providerOutput.amount
     );
     const hasFeeAmount = action.outputs.some(
-      output => output.satoshis === feeOutput.amount
+      (output: any) => output.satoshis === feeOutput.amount
     );
 
     return hasProviderAmount && hasFeeAmount;
