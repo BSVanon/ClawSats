@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { WalletConfig, CreateWalletOptions, ExpectedOutput, Chain } from '../types';
 import {
-  FEE_SATS, FEE_KID, FEE_DERIVATION_SUFFIX, FEE_IDENTITY_KEY, DEFAULT_TAAL_API_KEY
+  FEE_SATS, FEE_KID, FEE_DERIVATION_SUFFIX, FEE_IDENTITY_KEY
 } from '../protocol/constants';
 
 export class WalletManager {
@@ -227,7 +227,7 @@ export class WalletManager {
       identityKey,
       identityKey2: identityKey,
       filePath: undefined,
-      taalApiKey: process.env.TAAL_API_KEY || DEFAULT_TAAL_API_KEY,
+      taalApiKey: '',  // Not needed — wallet-toolbox uses GorillaPool ARC (no key required)
       devKeys: { [identityKey]: rootKeyHex } as Record<string, string>,
       mySQLConnection: '{}'
     };
