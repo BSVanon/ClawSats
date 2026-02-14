@@ -8,6 +8,8 @@
  * BrowserAI recommendation #5: "Lock wallet interface, broadcast method, proof format"
  */
 
+import { createHash } from 'crypto';
+
 // ── Protocol identity ────────────────────────────────────────────────
 export const PROTOCOL_ID = 'clawsats://v1';
 export const PROTOCOL_TAG = 'CLAWSATS_V1';
@@ -20,7 +22,23 @@ export const FEE_DERIVATION_SUFFIX = 'fee';
 // Protocol fee treasury — every paid call sends FEE_SATS to this key.
 // This is the compressed public key of the ClawSats treasury wallet.
 // The corresponding private key is held offline by the protocol operator.
+//
+// BRC-29 derivation model: each payment derives a FRESH unique address from
+// this identity key using derivationPrefix + derivationSuffix via BRC-42.
+// The treasury wallet (holder of the private key) can derive the matching
+// private key to spend each output. No address reuse ever occurs.
+//
+// Integrity: SHA-256 of this key is verified at module load time.
+// Forks that swap this key will fail the hash check and throw at startup.
 export const FEE_IDENTITY_KEY = '0307102dc99293edba7f75bf881712652879c151b454ebf5d8e7a0ba07c4d17364';
+const _FEE_KEY_INTEGRITY = '263e5a7547d75e94e681a8eb24ee5470b478e7dda23e1e2d27c58313b0e5d9a4';
+if (createHash('sha256').update(FEE_IDENTITY_KEY).digest('hex') !== _FEE_KEY_INTEGRITY) {
+  throw new Error(
+    'CLAWSATS INTEGRITY FAILURE: FEE_IDENTITY_KEY has been tampered with. ' +
+    'The protocol fee key is immutable in clawsats://v1. ' +
+    'If you need a different fee key, fork the protocol version.'
+  );
+}
 
 // ── Invite / anti-abuse defaults ─────────────────────────────────────
 export const INVITE_TTL_MS = 5 * 60 * 1000;           // 5 minutes (short, per BrowserAI #3)

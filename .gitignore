@@ -42,3 +42,6 @@ brand/
 
 # Faucet runtime data
 faucet-claims.json
+
+# Internal planning docs (not public)
+v2-roadmap.md
