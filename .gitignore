@@ -36,7 +36,8 @@ pnpm-lock.yaml
 
 *.code-workspace
 
-# Website + brand assets (deployed separately, will move to own repo)
+# Docs, website + brand assets (deployed separately, keep local)
+docs/
 website/
 brand/
 

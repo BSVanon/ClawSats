@@ -32,8 +32,9 @@ This wallet package is the foundational building block — it gives every Claw a
 - **Viral Spreading** — `broadcast_listing` (50 sats) — Claws earn BSV by telling other Claws about new Claws
 - **Anti-Abuse** — nonce replay protection, per-sender rate limiting, hop limits, audience caps, dedupe keys
 - **Signed Handshake** — invitations include `protocol`, `nonce`, `expires`, `signature` — deterministic receiver behavior
-- **Hardcoded Fee Key** — fee constants baked into `protocol/constants.ts` — no lookup dependency, no SPOF
-- **Peer Registry** — tracks known Claws with reputation scoring, auto-eviction of stale peers
+- **Hardcoded Fee Key** — fee constants baked into `protocol/constants.ts` — SHA-256 integrity check at startup, tamper-resistant
+- **BRC-29 Fresh Addresses** — every payment derives a unique address via BRC-42 key derivation, no address reuse
+- **Peer Registry** — tracks known Claws with reputation scoring, auto-eviction, disk persistence across restarts
 - **On-Chain Beacons** — strict `CLAWSATS_V1` OP_RETURN format with field order spec + reference watcher
 - **Flexible Params** — JSON-RPC accepts both `{ args, originator }` and flat params (human + AI friendly)
 - **Graceful Shutdown** — proper HTTP server lifecycle management
@@ -96,10 +97,11 @@ curl -i -X POST http://localhost:3321/call/echo \
   -H "Content-Type: application/json" \
   -d '{"message":"hello from a Claw"}'  # → 402 Payment Required
 
-# Call echo WITH payment proof (after building tx)
+# Call echo WITH payment (BRC-105: x-bsv-payment JSON header)
 curl -X POST http://localhost:3321/call/echo \
   -H "Content-Type: application/json" \
-  -H "x-bsv-payment-txid: <your-txid>" \
+  -H 'x-bsv-payment: {"derivationPrefix":"...","derivationSuffix":"clawsats","transaction":"<base64-beef>"}' \
+  -H "x-bsv-identity-key: <your-identity-key>" \
   -d '{"message":"hello from a Claw"}'  # → 200 + signed echo
 ```
 
@@ -125,19 +127,19 @@ npx clawsats-wallet watch
 # sign_message — verifiable by anyone with the pubkey
 curl -X POST http://localhost:3321/call/sign_message \
   -H "Content-Type: application/json" \
-  -H "x-bsv-payment-txid: <txid>" \
+  -H 'x-bsv-payment: {"derivationPrefix":"...","derivationSuffix":"clawsats","transaction":"<base64>"}' \
   -d '{"message":"hello world"}'
 
 # hash_commit — verifiable by re-hashing
 curl -X POST http://localhost:3321/call/hash_commit \
   -H "Content-Type: application/json" \
-  -H "x-bsv-payment-txid: <txid>" \
+  -H 'x-bsv-payment: {"derivationPrefix":"...","derivationSuffix":"clawsats","transaction":"<base64>"}' \
   -d '{"payload":"my important data"}'
 
 # timestamp_attest — provable time witness
 curl -X POST http://localhost:3321/call/timestamp_attest \
   -H "Content-Type: application/json" \
-  -H "x-bsv-payment-txid: <txid>" \
+  -H 'x-bsv-payment: {"derivationPrefix":"...","derivationSuffix":"clawsats","transaction":"<base64>"}' \
   -d '{"hash":"abc123..."}'
 ```
 
@@ -151,6 +153,7 @@ clawsats-wallet/
 │   │   ├── WalletManager.ts  # Wallet creation, loading, payment challenges, verification
 │   │   ├── PeerRegistry.ts   # In-memory registry of known Claws with reputation
 │   │   ├── CapabilityRegistry.ts  # Paid capabilities (echo, sign_message, hash_commit, ...)
+│   │   ├── PaymentHelper.ts  # Client-side BRC-105 payment builder (payForCapability)
 │   │   ├── NonceCache.ts     # Sliding-window nonce cache for invite replay protection
 │   │   └── RateLimiter.ts    # Per-sender sliding-window rate limiter
 │   ├── server/
@@ -225,29 +228,53 @@ For memory-only wallets (no SQLite), uses `Setup.createWalletClientNoEnv({ chain
 
 All JSON-RPC methods accept either `{ args: {...}, originator }` or flat params directly.
 
-## ClawSats 402 Payment Flow
+## ClawSats 402 Payment Flow (BRC-105)
 
 ```
-Requester                          Provider
-    │                                  │
-    ├── POST /call/capability ────────►│
-    │                                  │
-    │◄── 402 Payment Required ─────────┤
-    │    x-bsv-payment-satoshis: 1000  │
-    │    x-bsv-payment-derivation-     │
-    │      prefix: <nonce>             │
-    │    x-clawsats-fee-satoshis: 2    │
-    │    x-clawsats-fee-kid:           │
-    │      clawsats-fee-v1             │
-    │                                  │
-    ├── Build single BSV tx ──────────►│
-    │    Output 1: 1000 sats (provider)│
-    │    Output 2: 2 sats (fee)        │
-    │                                  │
-    ├── POST /call/capability ────────►│
-    │    + payment proof (txid/rawtx)  │
-    │                                  │
-    │◄── 200 OK + result ──────────────┤
+Requester                              Provider
+    │                                      │
+    ├── POST /call/capability ────────────►│
+    │                                      │
+    │◄── 402 Payment Required ─────────────┤
+    │    x-bsv-payment-satoshis-required   │
+    │    x-bsv-payment-derivation-prefix   │
+    │    x-clawsats-fee-satoshis-required  │
+    │    x-clawsats-fee-identity-key       │
+    │                                      │
+    ├── Build BSV tx (2 outputs): ────────►│
+    │    Output 0: provider sats           │
+    │      (BRC-29 derived from provider)  │
+    │    Output 1: 2 sats (protocol fee)   │
+    │      (BRC-29 derived from treasury)  │
+    │                                      │
+    ├── POST /call/capability ────────────►│
+    │    x-bsv-payment: {                  │
+    │      derivationPrefix, suffix,       │
+    │      transaction (base64 BEEF)       │
+    │    }                                 │
+    │                                      │
+    │    Provider auto-accepts output 0    │
+    │    via wallet.internalizeAction()    │
+    │                                      │
+    │◄── 200 OK + result ─────────────────┤
+    │    x-bsv-payment-satoshis-paid       │
+```
+
+Every payment goes to a **fresh derived address** (BRC-29/BRC-42). No address reuse.
+The protocol fee key is SHA-256 integrity-checked at startup — forks that tamper with it crash.
+
+### Programmatic Payment (PaymentHelper)
+
+```typescript
+import { PaymentHelper } from '@clawsats/wallet';
+
+const result = await PaymentHelper.payForCapability(
+  wallet,                                    // BRC-100 wallet instance
+  'http://provider:3321/call/echo',          // capability endpoint
+  { message: 'hello' },                      // request params
+  myIdentityKey                              // sender identity key
+);
+// Handles the full 402 round-trip: challenge → build tx → pay → get result
 ```
 
 ## CLI Commands
@@ -496,14 +523,22 @@ The `broadcast_listing` capability is the viral engine — Claws **earn BSV by t
 - [x] One-command `earn` mode — create + serve + beacon in one shot
 - [x] Receipt + BroadcastMeta types for future reputation plumbing
 
+### Phase 2.75: Go-Live Hardening ✅
+- [x] BRC-105 compliant 402 flow (x-bsv-payment JSON header, internalizeAction auto-accept)
+- [x] SHA-256 integrity check on FEE_IDENTITY_KEY (tamper-resistant)
+- [x] Client-side PaymentHelper (payForCapability — full 402 round-trip)
+- [x] Peer registry persistence to disk (data/peers.json, debounced writes)
+- [x] Signature verification on /wallet/announce (verified peers get higher reputation)
+- [x] Real faucet integration in fundWithTestnet() (HTTP POST to faucet API)
+- [x] Fee key advertised in 402 challenge headers (peers can verify canonical key)
+
 ### Phase 3: Production Hardening (Next)
 - [ ] Full beacon watcher scanning overlay networks + on-chain OP_RETURNs
 - [ ] BRC-33 MessageBox integration for Claw-to-Claw messaging
 - [ ] Overlay network publish/subscribe for broadcast discovery
 - [ ] Integration tests with live testnet wallets
 - [ ] `@bsv/auth-express-middleware` + `@bsv/payment-express-middleware` integration
-- [ ] Full payment verification in 402 flow (internalizeAction)
-- [ ] Peer registry persistence to disk
+- [ ] Treasury fee sweeper (cron to internalize fee outputs on merchant wallet)
 - [ ] Signed receipts + receipt validator + requester countersign
 - [ ] Key rotation and backup/recovery
 - [ ] Monitoring, alerting, and structured logging
