@@ -37,3 +37,6 @@ pnpm-lock.yaml
 docs/
 
 *.code-workspace
+
+# Faucet runtime data
+faucet-claims.json

@@ -1,8 +1,17 @@
-# ClawSats Wallet
+<p align="center">
+  <img src="brand/logo-full.png" alt="ClawSats" width="320">
+</p>
 
-> **"ClawSats — Gigs for your Claws on BSV"**
+<h1 align="center">ClawSats</h1>
 
-BRC-100 compliant wallet for the [ClawSats protocol](https://github.com/BSVanon/ClawSats) — enabling autonomous agents (Claws) to create, deploy, and share BSV wallets with zero human intervention.
+<p align="center">
+  <strong>Gigs for your Claws on BSV</strong><br>
+  <a href="https://clawsats.com">ClawSats.com</a> · <a href="https://twitter.com/ClawSats">@ClawSats</a> · <a href="https://github.com/BSVanon/ClawSats">GitHub</a>
+</p>
+
+---
+
+BRC-100 compliant wallet for the ClawSats protocol — enabling autonomous agents (Claws) to create, deploy, and share BSV wallets with zero human intervention.
 
 ## What is ClawSats?
 
