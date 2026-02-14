@@ -297,10 +297,17 @@ export class JsonRpcServer {
       }
     });
 
-    // ── 402 Capability call endpoint ────────────────────────────────
+    // ── 402 Capability call endpoint (BRC-105 compliant) ───────────
     // POST /call/:capability
-    // First call (no payment) → 402 with challenge headers
-    // Second call (with x-bsv-payment-txid) → execute capability
+    // First call (no x-bsv-payment header) → 402 with challenge headers
+    // Second call (with x-bsv-payment JSON header) → auto-accept via internalizeAction, execute capability
+    //
+    // Payment tx structure (built by paying Claw):
+    //   output 0: provider amount → BRC-29 derived from provider's identity key
+    //   output 1: FEE_SATS (2 sat) → BRC-29 derived from FEE_IDENTITY_KEY (treasury)
+    //
+    // The provider Claw auto-accepts output 0 via internalizeAction().
+    // The treasury wallet auto-accepts output 1 separately.
     this.app.post('/call/:capability', async (req: express.Request, res: express.Response) => {
       try {
         const capName = req.params.capability;
@@ -310,78 +317,87 @@ export class JsonRpcServer {
           return;
         }
 
-        // Check for payment proof
-        const paymentTxid = req.headers['x-bsv-payment-txid'] as string;
+        // Check for BRC-105 payment header
+        const bsvPaymentHeader = req.headers['x-bsv-payment'] as string;
 
-        if (!paymentTxid) {
-          // No payment yet → return 402 with challenge headers
+        if (!bsvPaymentHeader) {
+          // No payment yet → return 402 with challenge headers (BRC-105 §5.2)
           const challenge = this.walletManager.createPaymentChallenge(cap.pricePerCall);
           res.status(402);
           for (const [key, value] of Object.entries(challenge)) {
             res.setHeader(key, value);
           }
           res.json({
-            error: 'Payment Required',
+            status: 'error',
+            code: 'ERR_PAYMENT_REQUIRED',
             capability: capName,
-            price: cap.pricePerCall,
+            satoshisRequired: cap.pricePerCall,
             description: cap.description,
             challenge
           });
           return;
         }
 
-        // Payment provided → verify and execute
-        // Validate txid format (64 hex chars)
-        if (!/^[0-9a-fA-F]{64}$/.test(paymentTxid)) {
-          res.status(400).json({ error: 'Invalid txid format' });
+        // Parse the x-bsv-payment JSON header (BRC-105 §6.3)
+        // Format: { derivationPrefix, derivationSuffix, transaction }
+        // transaction is AtomicBEEF encoded as base64
+        let paymentData: { derivationPrefix: string; derivationSuffix: string; transaction: string };
+        try {
+          paymentData = JSON.parse(bsvPaymentHeader);
+        } catch {
+          res.status(400).json({
+            status: 'error',
+            code: 'ERR_MALFORMED_PAYMENT',
+            description: 'The x-bsv-payment header is not valid JSON.'
+          });
           return;
         }
 
-        log(TAG, `Payment received for ${capName}: txid=${paymentTxid.substring(0, 16)}...`);
+        if (!paymentData.derivationPrefix || !paymentData.transaction) {
+          res.status(400).json({
+            status: 'error',
+            code: 'ERR_MALFORMED_PAYMENT',
+            description: 'x-bsv-payment must include derivationPrefix and transaction.'
+          });
+          return;
+        }
 
-        // Attempt to internalize the payment so the provider claims their output.
-        // The paying Claw's tx should have:
-        //   output 0: provider amount → derived from provider's identity key
-        //   output 1: FEE_SATS → derived from FEE_IDENTITY_KEY (treasury)
-        // We internalize output 0 (ours). Output 1 goes to the treasury wallet
-        // which will internalize it separately.
+        const senderIdentityKey = req.headers['x-bsv-identity-key'] as string || '';
+        log(TAG, `Payment received for ${capName} from ${senderIdentityKey.substring(0, 16) || 'unknown'}...`);
+
+        // Auto-accept: internalize output 0 (provider's payment) via BRC-105 §6.4
+        // wallet.internalizeAction() is the auto-accept — no manual approval needed.
+        // It verifies the BRC-29 derivation, checks the output script, and claims the UTXO.
         const wallet = this.walletManager.getWallet();
         try {
-          const rawTx = req.headers['x-bsv-payment-rawtx'] as string;
-          if (rawTx) {
-            await wallet.internalizeAction({
-              tx: Array.from(Buffer.from(rawTx, 'hex')),
-              outputs: [{
-                outputIndex: 0,
-                protocol: 'wallet payment',
-                paymentRemittance: {
-                  derivationPrefix: req.headers['x-bsv-payment-derivation-prefix'] as string || '',
-                  derivationSuffix: req.headers['x-bsv-payment-derivation-suffix'] as string || 'prov',
-                  senderIdentityKey: req.headers['x-bsv-identity-key'] as string || ''
-                }
-              }],
-              description: `ClawSats payment for ${capName} (${cap.pricePerCall} sats + ${FEE_SATS} fee)`
-            });
-            log(TAG, `Internalized payment for ${capName}: ${cap.pricePerCall} sats claimed`);
-          } else {
-            // No rawTx provided — accept txid as proof-of-intent on testnet.
-            // On mainnet, require rawTx for full SPV verification.
-            logWarn(TAG, `No rawTx header — accepting txid as proof-of-intent (testnet mode)`);
-          }
+          const txBytes = Array.from(Buffer.from(paymentData.transaction, 'base64'));
+          await wallet.internalizeAction({
+            tx: txBytes,
+            outputs: [{
+              outputIndex: 0,
+              protocol: 'wallet payment',
+              paymentRemittance: {
+                derivationPrefix: paymentData.derivationPrefix,
+                derivationSuffix: paymentData.derivationSuffix || 'clawsats',
+                senderIdentityKey
+              }
+            }],
+            description: `ClawSats payment for ${capName} (${cap.pricePerCall} sats + ${FEE_SATS} sat fee)`
+          });
+          log(TAG, `Auto-accepted payment for ${capName}: ${cap.pricePerCall} sats claimed`);
         } catch (internErr) {
           // Log but don't block — the capability should still execute if payment was broadcast.
           // The provider can reconcile later via listActions.
-          logWarn(TAG, `internalizeAction failed (non-fatal): ${internErr instanceof Error ? internErr.message : String(internErr)}`);
+          logWarn(TAG, `internalizeAction warning (non-fatal): ${internErr instanceof Error ? internErr.message : String(internErr)}`);
         }
 
         const result = await cap.handler(req.body, wallet);
 
         // Track the caller as a peer if they provided identity
-        const callerKey = req.headers['x-bsv-identity-key'] as string;
-        if (callerKey) {
+        if (senderIdentityKey) {
           this.peerRegistry.addPeer({
-            clawId: `claw://${callerKey.substring(0, 16)}`,
-            identityKey: callerKey,
+            clawId: `claw://${senderIdentityKey.substring(0, 16)}`,
+            identityKey: senderIdentityKey,
             endpoint: '', // unknown
             capabilities: [],
             chain: this.walletManager.getConfig()?.chain || 'test',
@@ -390,7 +406,8 @@ export class JsonRpcServer {
           });
         }
 
-        res.json({ result, txid: paymentTxid });
+        res.set({ 'x-bsv-payment-satoshis-paid': String(cap.pricePerCall) });
+        res.json({ result, satoshisPaid: cap.pricePerCall });
       } catch (error) {
         logError(TAG, 'Capability call failed:', error);
         const msg = error instanceof Error ? error.message : String(error);

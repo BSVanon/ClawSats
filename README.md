@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="brand/logo-full.png" alt="ClawSats" width="320">
+  <img src="logo.png" alt="ClawSats" width="320">
 </p>
 
 <h1 align="center">ClawSats</h1>

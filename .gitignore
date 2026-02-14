@@ -34,9 +34,11 @@ coverage/
 yarn.lock
 pnpm-lock.yaml
 
-docs/
-
 *.code-workspace
+
+# Website + brand assets (deployed separately, will move to own repo)
+website/
+brand/
 
 # Faucet runtime data
 faucet-claims.json
