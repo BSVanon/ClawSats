@@ -1,16 +1,42 @@
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { join } from 'path';
 import { PeerRecord, Chain } from '../types';
 import { log, logWarn } from '../utils';
 
 const TAG = 'peers';
 const MAX_PEERS = 500;
 const STALE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const SAVE_DEBOUNCE_MS = 5000;
 
 /**
  * In-memory registry of known Claws.
- * Persisted to disk via WalletManager's config save cycle.
+ * Auto-persisted to data/peers.json on every mutation (debounced).
  */
 export class PeerRegistry {
   private peers: Map<string, PeerRecord> = new Map();
+  private persistPath: string | null = null;
+  private saveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /**
+   * Enable disk persistence. Call once at startup.
+   */
+  enablePersistence(dataDir: string): void {
+    if (!existsSync(dataDir)) {
+      mkdirSync(dataDir, { recursive: true });
+    }
+    this.persistPath = join(dataDir, 'peers.json');
+    if (existsSync(this.persistPath)) {
+      try {
+        const data = JSON.parse(readFileSync(this.persistPath, 'utf-8'));
+        if (Array.isArray(data)) {
+          this.loadFrom(data);
+          log(TAG, `Restored ${this.peers.size} peers from ${this.persistPath}`);
+        }
+      } catch {
+        logWarn(TAG, `Failed to load peers from ${this.persistPath}, starting fresh`);
+      }
+    }
+  }
 
   addPeer(peer: PeerRecord): void {
     const existing = this.peers.get(peer.identityKey);
@@ -21,6 +47,7 @@ export class PeerRegistry {
     peer.lastSeen = new Date().toISOString();
     this.peers.set(peer.identityKey, peer);
     this.evictStale();
+    this.scheduleSave();
     log(TAG, `Peer ${peer.identityKey.substring(0, 12)}... registered (${this.peers.size} total)`);
   }
 
@@ -92,6 +119,21 @@ export class PeerRegistry {
     }
     this.evictStale();
     log(TAG, `Loaded ${this.peers.size} peers from storage`);
+  }
+
+  private scheduleSave(): void {
+    if (!this.persistPath) return;
+    if (this.saveTimer) clearTimeout(this.saveTimer);
+    this.saveTimer = setTimeout(() => this.saveToDisk(), SAVE_DEBOUNCE_MS);
+  }
+
+  private saveToDisk(): void {
+    if (!this.persistPath) return;
+    try {
+      writeFileSync(this.persistPath, JSON.stringify(this.toJSON(), null, 2));
+    } catch {
+      logWarn(TAG, `Failed to save peers to ${this.persistPath}`);
+    }
   }
 
   private evictStale(): void {

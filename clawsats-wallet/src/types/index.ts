@@ -122,6 +122,7 @@ export interface ServeOptions {
   port?: number;
   host?: string;
   apiKey?: string;
+  publicEndpoint?: string;
   enableDiscovery?: boolean;
   cors?: boolean;
   configPath?: string;

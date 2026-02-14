@@ -11,6 +11,38 @@ import { join } from 'path';
 const program = new Command();
 const walletManager = new WalletManager();
 
+/**
+ * Build a proper OP_RETURN script with correct pushdata encoding.
+ * Format: OP_FALSE OP_RETURN <push tag> <push payload>
+ */
+function buildOpReturnScript(tag: string, payload: string): string {
+  const tagBuf = Buffer.from(tag, 'utf8');
+  const payloadBuf = Buffer.from(payload, 'utf8');
+
+  // OP_FALSE (0x00) + OP_RETURN (0x6a) + pushdata(tag) + pushdata(payload)
+  let script = '006a';
+  script += pushdata(tagBuf);
+  script += pushdata(payloadBuf);
+  return script;
+}
+
+function pushdata(buf: Buffer): string {
+  const len = buf.length;
+  if (len <= 75) {
+    // Direct push: single byte length prefix
+    return len.toString(16).padStart(2, '0') + buf.toString('hex');
+  } else if (len <= 255) {
+    // OP_PUSHDATA1 (0x4c) + 1-byte length
+    return '4c' + len.toString(16).padStart(2, '0') + buf.toString('hex');
+  } else if (len <= 65535) {
+    // OP_PUSHDATA2 (0x4d) + 2-byte length (little-endian)
+    const lo = (len & 0xff).toString(16).padStart(2, '0');
+    const hi = ((len >> 8) & 0xff).toString(16).padStart(2, '0');
+    return '4d' + lo + hi + buf.toString('hex');
+  }
+  throw new Error(`Pushdata too large: ${len} bytes`);
+}
+
 program
   .name('clawsats-wallet')
   .description('BRC-100 wallet for ClawSats with easy deployment and self-spreading capabilities')
@@ -61,7 +93,8 @@ program
   .description('Start headless JSON-RPC wallet server')
   .option('-p, --port <port>', 'Port to listen on', '3321')
   .option('-H, --host <host>', 'Host to bind to', 'localhost')
-  .option('-k, --api-key <key>', 'API key for authentication (optional)')
+  .option('-k, --api-key <key>', 'API key for admin JSON-RPC (auto-generated if public bind)')
+  .option('--endpoint <url>', 'Public endpoint URL to advertise (for /discovery)')
   .option('--no-cors', 'Disable CORS', false)
   .option('--enable-discovery', 'Enable discovery endpoint', true)
   .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
@@ -82,6 +115,7 @@ program
         port: parseInt(options.port, 10),
         host: options.host,
         apiKey: options.apiKey,
+        publicEndpoint: options.endpoint,
         cors: options.cors,
         enableDiscovery: options.enableDiscovery
       };
@@ -130,7 +164,8 @@ program
       }
 
       const config = walletManager.getConfig()!;
-      const sharing = new SharingProtocol(config);
+      const wallet = walletManager.getWallet();
+      const sharing = new SharingProtocol(config, wallet);
       const invitation = await sharing.createInvitation(options.recipient);
 
       console.log(`📨 Invitation created: ${invitation.invitationId}`);
@@ -265,7 +300,7 @@ program
       const wallet = walletManager.getWallet();
       const endpoint = options.endpoint || config.endpoints.jsonrpc;
 
-      // Build OP_RETURN beacon data
+      // Build OP_RETURN beacon with proper pushdata encoding
       const beaconPayload = JSON.stringify({
         protocol: 'CLAWSATS_V1',
         identityKey: config.identityKey,
@@ -275,7 +310,7 @@ program
         timestamp: new Date().toISOString()
       });
 
-      const opReturnScript = `006a${Buffer.from('CLAWSATS_V1').toString('hex')}${Buffer.from(beaconPayload).toString('hex')}`;
+      const opReturnScript = buildOpReturnScript('CLAWSATS_V1', beaconPayload);
 
       console.log('📡 Publishing on-chain beacon...');
       console.log(`  Tag:      CLAWSATS_V1`);
@@ -318,6 +353,7 @@ program
   .option('-H, --host <host>', 'Host to bind to', '0.0.0.0')
   .option('-c, --chain <chain>', 'Blockchain network (test/main)', 'test')
   .option('-n, --name <name>', 'Wallet name', `claw-${Date.now()}`)
+  .option('-k, --api-key <key>', 'API key for admin JSON-RPC (auto-generated if public bind)')
   .option('--endpoint <url>', 'Public endpoint URL to advertise')
   .option('--no-beacon', 'Skip on-chain beacon publication')
   .action(async (options) => {
@@ -348,6 +384,8 @@ program
       const server = new JsonRpcServer(walletManager, {
         port,
         host,
+        apiKey: options.apiKey,
+        publicEndpoint,
         cors: true,
         enableDiscovery: true
       });
@@ -363,7 +401,7 @@ program
             ch: config.chain, cap: server.getCapabilityRegistry().listNames(),
             ts: new Date().toISOString(), sig: ''
           });
-          const opReturnScript = `006a${Buffer.from('CLAWSATS_V1').toString('hex')}${Buffer.from(beaconPayload).toString('hex')}`;
+          const opReturnScript = buildOpReturnScript('CLAWSATS_V1', beaconPayload);
           const result = await wallet.createAction({
             description: 'ClawSats beacon',
             outputs: [{ satoshis: 0, script: opReturnScript, outputDescription: 'CLAWSATS_V1 beacon' }],

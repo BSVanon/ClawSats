@@ -30,11 +30,14 @@ This wallet package is the foundational building block — it gives every Claw a
 - **402 Payment Flow** — `POST /call/:capability` returns 402 with challenge headers, re-call with payment to execute
 - **Verifiable Capabilities** — `sign_message`, `hash_commit`, `timestamp_attest` — cryptographically provable results
 - **Viral Spreading** — `broadcast_listing` (50 sats) — Claws earn BSV by telling other Claws about new Claws
+- **Strict Payment Gating** — `internalizeAction` must succeed or capability is NOT executed (no free rides)
+- **Auto-Secured Public Bind** — binding to `0.0.0.0` auto-generates an API key; JSON-RPC admin is always protected
 - **Anti-Abuse** — nonce replay protection, per-sender rate limiting, hop limits, audience caps, dedupe keys
-- **Signed Handshake** — invitations include `protocol`, `nonce`, `expires`, `signature` — deterministic receiver behavior
+- **Signed Handshake** — invitations include `protocol`, `nonce`, `expires`, `signature` — cryptographically verified
 - **Hardcoded Fee Key** — fee constants baked into `protocol/constants.ts` — SHA-256 integrity check at startup, tamper-resistant
 - **BRC-29 Fresh Addresses** — every payment derives a unique address via BRC-42 key derivation, no address reuse
 - **Peer Registry** — tracks known Claws with reputation scoring, auto-eviction, disk persistence across restarts
+- **rootKeyHex Never Exposed** — `getConfig` RPC redacts the private key; it never leaves the process
 - **On-Chain Beacons** — strict `CLAWSATS_V1` OP_RETURN format with field order spec + reference watcher
 - **Flexible Params** — JSON-RPC accepts both `{ args, originator }` and flat params (human + AI friendly)
 - **Graceful Shutdown** — proper HTTP server lifecycle management
@@ -402,7 +405,7 @@ After=network.target
 Type=simple
 User=clawsats
 WorkingDirectory=/opt/clawsats/clawsats-wallet
-ExecStart=/usr/bin/node dist/cli/index.js earn --endpoint http://YOUR_VPS_IP:3321
+ExecStart=/usr/bin/node dist/cli/index.js earn --endpoint http://YOUR_VPS_IP:3321 --api-key YOUR_SECRET_KEY
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production
@@ -442,8 +445,9 @@ npx clawsats-wallet share -r http://YOUR_VPS_IP:3321
 
 - [ ] Run as non-root user (`clawsats` system user)
 - [ ] Firewall: only ports 22 + 3321 open
-- [ ] Set `--api-key` for JSON-RPC auth on private methods
-- [ ] Back up `config/wallet-config.json` (contains rootKeyHex)
+- [ ] Use `--api-key` for JSON-RPC auth (auto-generated if you bind to `0.0.0.0`)
+- [ ] Use `--endpoint http://YOUR_VPS_IP:3321` so `/discovery` advertises a reachable URL
+- [ ] Back up `config/wallet-config.json` (contains rootKeyHex — never exposed via API)
 - [ ] Consider reverse proxy (nginx/caddy) with TLS for production
 - [ ] Monitor with `systemctl status clawsats` and journal logs
 
@@ -460,7 +464,6 @@ All fee and limit values are hardcoded in `src/protocol/constants.ts`. No lookup
 | `BROADCAST_HOP_LIMIT` | 2 | Max relay hops for broadcast_listing |
 | `BROADCAST_AUDIENCE_LIMIT` | 10 | Max peers per paid broadcast |
 | `MVP_WALLET_INTERFACE` | `@bsv/wallet-toolbox::WalletInterface` | Locked wallet interface |
-| `MVP_PROOF_FORMAT` | `txid+rawtx` | Payment proof format |
 
 ## How Claws Spread
 
@@ -525,10 +528,17 @@ The `broadcast_listing` capability is the viral engine — Claws **earn BSV by t
 
 ### Phase 2.75: Go-Live Hardening ✅
 - [x] BRC-105 compliant 402 flow (x-bsv-payment JSON header, internalizeAction auto-accept)
+- [x] **Strict payment gating** — internalizeAction failure = 402 rejection, no free capability execution
+- [x] **Auto-secured public bind** — 0.0.0.0 auto-generates API key; JSON-RPC always protected
+- [x] **rootKeyHex never exposed** — getConfig RPC redacts private key material
 - [x] SHA-256 integrity check on FEE_IDENTITY_KEY (tamper-resistant)
 - [x] Client-side PaymentHelper (payForCapability — full 402 round-trip)
 - [x] Peer registry persistence to disk (data/peers.json, debounced writes)
-- [x] Signature verification on /wallet/announce (verified peers get higher reputation)
+- [x] Signature verification on /wallet/announce and /wallet/invite
+- [x] SharingProtocol always wired with live wallet instance (CLI + server)
+- [x] Fixed CLI bin path (dist/cli/index.js)
+- [x] Proper OP_RETURN pushdata encoding for on-chain beacons
+- [x] /discovery uses --endpoint (never advertises 0.0.0.0)
 - [x] Real faucet integration in fundWithTestnet() (HTTP POST to faucet API)
 - [x] Fee key advertised in 402 challenge headers (peers can verify canonical key)
 

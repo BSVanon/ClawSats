@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import http from 'http';
+import { randomBytes } from 'crypto';
 import { JSONRPCServer } from 'json-rpc-2.0';
 import { WalletManager } from '../core/WalletManager';
 import { PeerRegistry } from '../core/PeerRegistry';
@@ -26,16 +27,31 @@ export class JsonRpcServer {
   private port: number;
   private host: string;
   private apiKey?: string;
+  private publicEndpoint: string;
 
   constructor(walletManager: WalletManager, options: ServeOptions = {}) {
     this.walletManager = walletManager;
     this.peerRegistry = new PeerRegistry();
+    this.peerRegistry.enablePersistence(require('path').join(process.cwd(), 'data'));
     this.capabilityRegistry = new CapabilityRegistry();
     this.nonceCache = new NonceCache();
     this.inviteRateLimiter = new RateLimiter(INVITE_MAX_PER_HOUR, 60 * 60 * 1000);
     this.port = options.port || 3321;
     this.host = options.host || 'localhost';
-    this.apiKey = options.apiKey;
+    this.publicEndpoint = options.publicEndpoint || '';
+
+    // SECURITY: If binding to a public interface, REQUIRE an API key.
+    // If none provided, auto-generate one and print it once.
+    const isPublic = this.host !== 'localhost' && this.host !== '127.0.0.1';
+    if (options.apiKey) {
+      this.apiKey = options.apiKey;
+    } else if (isPublic) {
+      this.apiKey = randomBytes(24).toString('base64url');
+      log(TAG, `\n⚠️  PUBLIC BIND DETECTED (${this.host}) — auto-generated API key:`);
+      log(TAG, `   ${this.apiKey}`);
+      log(TAG, `   Use this key in the Authorization header for admin JSON-RPC calls.`);
+      log(TAG, `   Or pass --api-key <key> to set your own.\n`);
+    }
 
     // Create JSON-RPC server
     this.rpcServer = new JSONRPCServer();
@@ -94,17 +110,19 @@ export class JsonRpcServer {
   }
 
   private authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): void {
-    // Skip authentication for public endpoints
+    // Public endpoints — never require auth
     const publicPaths = ['/health', '/discovery', '/wallet/invite', '/wallet/announce'];
     if (publicPaths.includes(req.path) || req.path.startsWith('/call/')) {
       return next();
     }
 
-    // If API key is configured, require authentication
+    // Admin endpoints (JSON-RPC /) — ALWAYS require auth when API key is set.
+    // Since we auto-generate a key on public bind, this means JSON-RPC is
+    // always protected when the server is publicly reachable.
     if (this.apiKey) {
       const authHeader = req.headers.authorization;
       if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        res.status(401).json({ error: 'Missing or invalid Authorization header' });
+        res.status(401).json({ error: 'Authentication required. Use Authorization: Bearer <api-key>' });
         return;
       }
 
@@ -179,7 +197,10 @@ export class JsonRpcServer {
     // Discovery endpoint
     this.app.get('/discovery', (req: express.Request, res: express.Response) => {
       const config = this.walletManager.getConfig();
-      const base = `http://${this.host}:${this.port}`;
+      // Use publicEndpoint if set, otherwise derive from host:port.
+      // Never advertise 0.0.0.0 — it's unusable by peers.
+      const base = this.publicEndpoint
+        || (this.host === '0.0.0.0' ? `http://localhost:${this.port}` : `http://${this.host}:${this.port}`);
       
       res.json({
         protocol: 'clawsats-wallet/v1',
@@ -225,7 +246,8 @@ export class JsonRpcServer {
         }
 
         // Validate invitation structure
-        const sharing = new SharingProtocol(config);
+        const wallet = this.walletManager.getWallet();
+        const sharing = new SharingProtocol(config, wallet);
         const validation = sharing.validateInvitation(invitation);
         if (!validation.valid) {
           res.status(400).json({ error: `Invalid invitation: ${validation.reason}` });
@@ -236,6 +258,26 @@ export class JsonRpcServer {
         if (invitation.nonce && !this.nonceCache.check(invitation.nonce)) {
           res.status(400).json({ error: 'Nonce replay detected' });
           return;
+        }
+
+        // Cryptographic signature verification on invitation
+        if (invitation.signature) {
+          try {
+            const { signature, ...rest } = invitation as any;
+            const payload = JSON.stringify(rest);
+            const result = await wallet.verifySignature({
+              data: Array.from(Buffer.from(payload, 'utf8')),
+              signature: Array.from(Buffer.from(signature, 'base64')),
+              protocolID: [0, 'clawsats-sharing'],
+              keyID: 'sharing-v1',
+              counterparty: invitation.sender.identityKey
+            });
+            if (!result.valid) {
+              logWarn(TAG, `Invitation signature invalid from ${senderKey.substring(0, 12)}...`);
+            }
+          } catch {
+            logWarn(TAG, `Invitation signature verification error from ${senderKey.substring(0, 12)}...`);
+          }
         }
 
         // Register sender as a known peer
@@ -277,6 +319,35 @@ export class JsonRpcServer {
           return;
         }
 
+        // Validate identity key format (33-byte compressed pubkey = 66 hex chars)
+        if (!/^[0-9a-fA-F]{66}$/.test(announcement.identityKey)) {
+          res.status(400).json({ error: 'Invalid identityKey format (expected 66 hex chars)' });
+          return;
+        }
+
+        // Signature verification: if signature is present, verify it
+        let verified = false;
+        if (announcement.signature && announcement.signature !== '') {
+          try {
+            const wallet = this.walletManager.getWallet();
+            const { signature, ...rest } = announcement;
+            const payload = JSON.stringify(rest);
+            const result = await wallet.verifySignature({
+              data: Array.from(Buffer.from(payload, 'utf8')),
+              signature: Array.from(Buffer.from(signature, 'base64')),
+              protocolID: [0, 'clawsats-sharing'],
+              keyID: 'sharing-v1',
+              counterparty: announcement.identityKey
+            });
+            verified = result.valid === true;
+            if (!verified) {
+              logWarn(TAG, `Announcement signature invalid from ${announcement.identityKey.substring(0, 12)}...`);
+            }
+          } catch {
+            logWarn(TAG, `Announcement signature verification error from ${announcement.identityKey.substring(0, 12)}...`);
+          }
+        }
+
         const peer: PeerRecord = {
           clawId: announcement.clawId || `claw://${announcement.identityKey.substring(0, 16)}`,
           identityKey: announcement.identityKey,
@@ -284,12 +355,12 @@ export class JsonRpcServer {
           capabilities: announcement.capabilities?.map((c: any) => c.name) || [],
           chain: announcement.networkInfo?.chain || 'test',
           lastSeen: new Date().toISOString(),
-          reputation: 30
+          reputation: verified ? 40 : 15
         };
         this.peerRegistry.addPeer(peer);
 
-        log(TAG, `Received announcement from ${announcement.identityKey.substring(0, 12)}...`);
-        res.json({ registered: true, peersKnown: this.peerRegistry.size() });
+        log(TAG, `Received announcement from ${announcement.identityKey.substring(0, 12)}... (verified=${verified})`);
+        res.json({ registered: true, verified, peersKnown: this.peerRegistry.size() });
       } catch (error) {
         logError(TAG, 'Announce handling failed:', error);
         const msg = error instanceof Error ? error.message : String(error);
@@ -365,12 +436,12 @@ export class JsonRpcServer {
         const senderIdentityKey = req.headers['x-bsv-identity-key'] as string || '';
         log(TAG, `Payment received for ${capName} from ${senderIdentityKey.substring(0, 16) || 'unknown'}...`);
 
-        // Auto-accept: internalize output 0 (provider's payment) via BRC-105 §6.4
-        // wallet.internalizeAction() is the auto-accept — no manual approval needed.
-        // It verifies the BRC-29 derivation, checks the output script, and claims the UTXO.
+        // STRICT PAYMENT GATE: internalize output 0 (provider's payment) via BRC-105 §6.4.
+        // If internalizeAction fails, the payment is invalid — DO NOT execute the capability.
+        // This prevents attackers from sending garbage payments and getting free work.
         const wallet = this.walletManager.getWallet();
+        const txBytes = Array.from(Buffer.from(paymentData.transaction, 'base64'));
         try {
-          const txBytes = Array.from(Buffer.from(paymentData.transaction, 'base64'));
           await wallet.internalizeAction({
             tx: txBytes,
             outputs: [{
@@ -386,9 +457,15 @@ export class JsonRpcServer {
           });
           log(TAG, `Auto-accepted payment for ${capName}: ${cap.pricePerCall} sats claimed`);
         } catch (internErr) {
-          // Log but don't block — the capability should still execute if payment was broadcast.
-          // The provider can reconcile later via listActions.
-          logWarn(TAG, `internalizeAction warning (non-fatal): ${internErr instanceof Error ? internErr.message : String(internErr)}`);
+          // Payment verification FAILED — reject the request.
+          const errMsg = internErr instanceof Error ? internErr.message : String(internErr);
+          logWarn(TAG, `Payment rejected for ${capName}: ${errMsg}`);
+          res.status(402).json({
+            status: 'error',
+            code: 'ERR_PAYMENT_INVALID',
+            description: `Payment could not be verified: ${errMsg}. Send a valid BRC-105 payment.`
+          });
+          return;
         }
 
         const result = await cap.handler(req.body, wallet);
@@ -481,7 +558,11 @@ export class JsonRpcServer {
     });
 
     this.rpcServer.addMethod('getConfig', async () => {
-      return this.walletManager.getConfig();
+      // SECURITY: Never expose rootKeyHex over any endpoint.
+      const config = this.walletManager.getConfig();
+      if (!config) return null;
+      const { rootKeyHex, ...safeConfig } = config;
+      return safeConfig;
     });
 
     // Utility methods
@@ -517,7 +598,8 @@ export class JsonRpcServer {
       const config = this.walletManager.getConfig();
       if (!config) throw new Error('Wallet not initialized');
 
-      const sharing = new SharingProtocol(config);
+      const wallet = this.walletManager.getWallet();
+      const sharing = new SharingProtocol(config, wallet);
       const invitation = await sharing.createInvitation(`claw://${endpoint}`, {
         recipientEndpoint: endpoint
       });
