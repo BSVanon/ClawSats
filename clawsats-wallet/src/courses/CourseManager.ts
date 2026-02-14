@@ -83,6 +83,34 @@ export interface DonationRecord {
   createdAt: string;
 }
 
+// ── Teaching Chain Event ────────────────────────────────────────────
+// Tracks every teaching event so we can trace ripple effects back to donors.
+
+export interface TeachingEvent {
+  courseId: string;
+  teacherKey: string;        // identity key of the teaching Claw
+  learnerKey: string;        // identity key of the learning Claw
+  generation: number;        // 1 = primary (direct from donation), 2 = secondary, etc.
+  donationId?: string;       // which donation funded the original education chain
+  timestamp: string;
+}
+
+// ── Donor Impact Report ─────────────────────────────────────────────
+
+export interface DonorImpactReport {
+  donationId: string;
+  donorName: string;
+  totalSats: number;
+  donatedAt: string;
+  primaryEffects: number;    // Claws directly educated by this donation
+  secondaryEffects: number;  // Claws educated by those Claws
+  tertiaryEffects: number;   // Claws educated by secondary Claws
+  totalRipple: number;       // total Claws touched across all generations
+  maxGeneration: number;     // deepest generation reached
+  courseBreakdown: { courseId: string; clawsReached: number }[];
+  timeline: { timestamp: string; event: string; generation: number }[];
+}
+
 // ── CourseManager ───────────────────────────────────────────────────
 
 export class CourseManager {
@@ -90,6 +118,7 @@ export class CourseManager {
   private completions: Map<string, CourseCompletion> = new Map(); // courseId → completion
   private metrics: Map<string, CourseMetrics> = new Map();
   private donations: DonationRecord[] = [];
+  private teachingChain: TeachingEvent[] = [];  // full teaching history for ripple tracking
   private dataDir: string;
   private coursesDir: string;
 
@@ -156,7 +185,10 @@ export class CourseManager {
       if (state.donations) {
         this.donations = state.donations;
       }
-      log(TAG, `Loaded state: ${this.completions.size} completions, ${this.donations.length} donations`);
+      if (state.teachingChain) {
+        this.teachingChain = state.teachingChain;
+      }
+      log(TAG, `Loaded state: ${this.completions.size} completions, ${this.donations.length} donations, ${this.teachingChain.length} teaching events`);
     } catch {
       logWarn(TAG, 'Failed to load course state');
     }
@@ -173,7 +205,8 @@ export class CourseManager {
     const state = {
       completions: Object.fromEntries(this.completions),
       metrics: Object.fromEntries(this.metrics),
-      donations: this.donations
+      donations: this.donations,
+      teachingChain: this.teachingChain
     };
     writeFileSync(statePath, JSON.stringify(state, null, 2), 'utf8');
   }
@@ -293,7 +326,7 @@ export class CourseManager {
   /**
    * Record that we taught a course to another Claw.
    */
-  recordTeaching(courseId: string, learnerIdentityKey: string): void {
+  recordTeaching(courseId: string, learnerIdentityKey: string, teacherIdentityKey?: string): void {
     let met = this.metrics.get(courseId);
     if (!met) {
       met = {
@@ -309,7 +342,55 @@ export class CourseManager {
     if (!met.uniqueLearners.includes(learnerIdentityKey)) {
       met.uniqueLearners.push(learnerIdentityKey);
     }
+
+    // Track the teaching chain for ripple effect calculation.
+    // Find the generation: if the teacher was taught by someone, this is generation+1.
+    const teacherKey = teacherIdentityKey || 'self';
+    const parentEvent = this.teachingChain.find(
+      e => e.learnerKey === teacherKey && e.courseId === courseId
+    );
+    const generation = parentEvent ? parentEvent.generation + 1 : 1;
+    const donationId = parentEvent?.donationId || this.findDonationForCourse(courseId);
+
+    const event: TeachingEvent = {
+      courseId,
+      teacherKey,
+      learnerKey: learnerIdentityKey,
+      generation,
+      donationId,
+      timestamp: new Date().toISOString()
+    };
+    this.teachingChain.push(event);
+
+    // Update propagation depth
+    if (generation > met.propagationDepth) {
+      met.propagationDepth = generation;
+    }
+
+    // Update donor record ripple counts
+    if (donationId) {
+      const donation = this.donations.find(d => d.donationId === donationId);
+      if (donation) {
+        if (generation === 1) donation.clawsFunded++;
+        else donation.clawsTaught++;
+      }
+    }
+
     this.saveState();
+  }
+
+  /**
+   * Find the most recent donation that targeted a specific course.
+   */
+  private findDonationForCourse(courseId: string): string | undefined {
+    // Search donations in reverse (most recent first)
+    for (let i = this.donations.length - 1; i >= 0; i--) {
+      const d = this.donations[i];
+      if (d.coursesTargeted.includes('*') || d.coursesTargeted.includes(courseId)) {
+        return d.donationId;
+      }
+    }
+    return undefined;
   }
 
   /**
@@ -379,5 +460,124 @@ export class CourseManager {
    */
   get courseCount(): number {
     return this.courses.size;
+  }
+
+  /**
+   * Get detailed impact report for a specific donor.
+   * This is what makes donors drop large amounts — they can see exactly
+   * how their money rippled through the network.
+   */
+  getDonorImpact(donationId: string): DonorImpactReport | null {
+    const donation = this.donations.find(d => d.donationId === donationId);
+    if (!donation) return null;
+
+    // Find all teaching events linked to this donation
+    const events = this.teachingChain.filter(e => e.donationId === donationId);
+
+    let primary = 0, secondary = 0, tertiary = 0;
+    let maxGen = 0;
+    const courseReach: Map<string, Set<string>> = new Map();
+    const timeline: { timestamp: string; event: string; generation: number }[] = [];
+
+    for (const e of events) {
+      if (e.generation === 1) primary++;
+      else if (e.generation === 2) secondary++;
+      else if (e.generation >= 3) tertiary++;
+      if (e.generation > maxGen) maxGen = e.generation;
+
+      if (!courseReach.has(e.courseId)) courseReach.set(e.courseId, new Set());
+      courseReach.get(e.courseId)!.add(e.learnerKey);
+
+      const genLabel = e.generation === 1 ? 'primary' : e.generation === 2 ? 'secondary' : `gen-${e.generation}`;
+      timeline.push({
+        timestamp: e.timestamp,
+        event: `${genLabel}: ${e.teacherKey.substring(0, 12)}... taught ${e.learnerKey.substring(0, 12)}... (${e.courseId})`,
+        generation: e.generation
+      });
+    }
+
+    return {
+      donationId: donation.donationId,
+      donorName: donation.donorIdentifier,
+      totalSats: donation.totalSats,
+      donatedAt: donation.createdAt,
+      primaryEffects: primary,
+      secondaryEffects: secondary,
+      tertiaryEffects: tertiary,
+      totalRipple: events.length,
+      maxGeneration: maxGen,
+      courseBreakdown: Array.from(courseReach.entries()).map(([courseId, learners]) => ({
+        courseId,
+        clawsReached: learners.size
+      })),
+      timeline: timeline.sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+    };
+  }
+
+  /**
+   * Get aggregate impact across ALL donations — the big picture for social media.
+   */
+  getAggregateImpact(): {
+    totalDonors: number;
+    totalSatsDonated: number;
+    totalClawsEducated: number;
+    totalTeachingEvents: number;
+    maxPropagationDepth: number;
+    generationBreakdown: { generation: number; count: number }[];
+    topCourses: { courseId: string; title: string; totalReach: number }[];
+    recentActivity: { timestamp: string; event: string }[];
+  } {
+    const genCounts: Map<number, number> = new Map();
+    const courseReach: Map<string, Set<string>> = new Map();
+    const allLearners = new Set<string>();
+    let maxDepth = 0;
+
+    for (const e of this.teachingChain) {
+      genCounts.set(e.generation, (genCounts.get(e.generation) || 0) + 1);
+      allLearners.add(e.learnerKey);
+      if (e.generation > maxDepth) maxDepth = e.generation;
+
+      if (!courseReach.has(e.courseId)) courseReach.set(e.courseId, new Set());
+      courseReach.get(e.courseId)!.add(e.learnerKey);
+    }
+
+    const generationBreakdown = Array.from(genCounts.entries())
+      .map(([generation, count]) => ({ generation, count }))
+      .sort((a, b) => a.generation - b.generation);
+
+    const topCourses = Array.from(courseReach.entries())
+      .map(([courseId, learners]) => ({
+        courseId,
+        title: this.courses.get(courseId)?.title || courseId,
+        totalReach: learners.size
+      }))
+      .sort((a, b) => b.totalReach - a.totalReach);
+
+    // Last 20 teaching events for "recent activity" feed
+    const recentActivity = this.teachingChain
+      .slice(-20)
+      .reverse()
+      .map(e => ({
+        timestamp: e.timestamp,
+        event: `Gen ${e.generation}: ${e.learnerKey.substring(0, 12)}... learned ${e.courseId}`
+      }));
+
+    return {
+      totalDonors: new Set(this.donations.map(d => d.donorIdentifier)).size,
+      totalSatsDonated: this.donations.reduce((sum, d) => sum + d.totalSats, 0),
+      totalClawsEducated: allLearners.size,
+      totalTeachingEvents: this.teachingChain.length,
+      maxPropagationDepth: maxDepth,
+      generationBreakdown,
+      topCourses,
+      recentActivity
+    };
+  }
+
+  /**
+   * Get all donation IDs (for lookup by donors).
+   */
+  getDonationIds(): string[] {
+    return this.donations.map(d => d.donationId);
   }
 }

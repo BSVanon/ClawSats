@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import { WalletManager } from '../core/WalletManager';
 import { JsonRpcServer } from '../server/JsonRpcServer';
 import { SharingProtocol } from '../protocol';
+import { BEACON_MAX_BYTES } from '../protocol/constants';
 import { CreateWalletOptions, ServeOptions } from '../types';
 import { existsSync, writeFileSync } from 'fs';
 import { join } from 'path';
@@ -18,6 +19,12 @@ const walletManager = new WalletManager();
 function buildOpReturnScript(tag: string, payload: string): string {
   const tagBuf = Buffer.from(tag, 'utf8');
   const payloadBuf = Buffer.from(payload, 'utf8');
+
+  // Enforce BEACON_MAX_BYTES to stay within safe OP_RETURN limits
+  const totalBytes = tagBuf.length + payloadBuf.length;
+  if (totalBytes > BEACON_MAX_BYTES) {
+    throw new Error(`Beacon payload too large: ${totalBytes} bytes (max ${BEACON_MAX_BYTES}). Shorten capabilities list or endpoint URL.`);
+  }
 
   // OP_FALSE (0x00) + OP_RETURN (0x6a) + pushdata(tag) + pushdata(payload)
   let script = '006a';

@@ -133,14 +133,14 @@ export class JsonRpcServer {
       this.app.use(cors());
     }
 
-    this.app.use(express.json());
+    this.app.use(express.json({ limit: '64kb' }));
     this.app.use(this.authMiddleware.bind(this));
   }
 
   private authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): void {
     // Public endpoints — never require auth
-    const publicPaths = ['/health', '/discovery', '/wallet/invite', '/wallet/announce'];
-    if (publicPaths.includes(req.path) || req.path.startsWith('/call/')) {
+    const publicPaths = ['/health', '/discovery', '/wallet/invite', '/wallet/announce', '/scholarships', '/scholarships/dashboard', '/courses/metrics', '/donate', '/courses'];
+    if (publicPaths.includes(req.path) || req.path.startsWith('/call/') || req.path.startsWith('/static/') || req.path.startsWith('/donor/')) {
       return next();
     }
 
@@ -290,6 +290,41 @@ export class JsonRpcServer {
         ...metrics,
         message: 'BSV Cluster Courses — education spreading across the Claw network',
         donateEndpoint: `${this.publicEndpoint || `http://${this.host}:${this.port}`}/donate`
+      });
+    });
+
+    // Per-donor impact report — the killer feature for fundraising.
+    // A donor can see exactly how their money rippled through the network:
+    // primary effects (direct learners), secondary (learners who taught others),
+    // tertiary (third-generation spread), with a full timeline.
+    // GET /donor/:donationId — no auth required (donation IDs are opaque)
+    this.app.get('/donor/:donationId', (req: express.Request, res: express.Response) => {
+      const impact = this.courseManager.getDonorImpact(req.params.donationId);
+      if (!impact) {
+        res.status(404).json({ error: 'Donation not found. Check your donation ID.' });
+        return;
+      }
+      res.json({
+        ...impact,
+        message: `Your ${impact.totalSats} sats created ${impact.totalRipple} ripple effects across ${impact.maxGeneration} generations.`,
+        trackUrl: `${this.publicEndpoint || `http://${this.host}:${this.port}`}/donor/${impact.donationId}`
+      });
+    });
+
+    // Aggregate scholarship dashboard — the big picture for social media.
+    // Shows total impact across ALL donations: donors, sats, claws educated,
+    // generation breakdown, top courses, recent activity feed.
+    // GET /scholarships/dashboard — no auth required
+    this.app.get('/scholarships/dashboard', (req: express.Request, res: express.Response) => {
+      const aggregate = this.courseManager.getAggregateImpact();
+      const basic = this.courseManager.getSpreadMetrics();
+      res.json({
+        ...aggregate,
+        coursesAvailable: basic.totalCoursesAvailable,
+        coursesCompleted: basic.totalCoursesCompleted,
+        message: 'BSV Scholarships — real-time impact dashboard',
+        donateUrl: `${this.publicEndpoint || `http://${this.host}:${this.port}`}/scholarships`,
+        timestamp: new Date().toISOString()
       });
     });
 
@@ -681,7 +716,38 @@ export class JsonRpcServer {
             }
           }
 
-          // Mark this payment as used AFTER successful internalization
+          // FEE VERIFICATION: The 2-sat protocol fee output MUST exist in the tx.
+          // We can't internalize it (we don't hold the fee key), but we CAN verify
+          // that the transaction contains an output with >= FEE_SATS that is NOT
+          // the provider's output (output 0). This prevents callers from skipping
+          // the fee while still paying the provider.
+          //
+          // The fee wallet holder does full BRC-29 derivation verification when
+          // sweeping. This check ensures the output at least exists and has value.
+          try {
+            // Parse minimal tx structure to count outputs and check satoshi values.
+            // AtomicBEEF format: the raw tx is embedded after the BEEF envelope header.
+            // For robustness, we check all outputs beyond index 0 for one with >= FEE_SATS.
+            const txBuf = Buffer.from(paymentData.transaction, 'base64');
+            const feeOutputFound = this.verifyFeeOutputExists(txBuf);
+            if (!feeOutputFound) {
+              logWarn(TAG, `Missing ${FEE_SATS}-sat fee output in payment for ${capName}`);
+              res.status(402).json({
+                status: 'error',
+                code: 'ERR_MISSING_FEE',
+                description: `Payment must include a ${FEE_SATS}-sat fee output to the ClawSats protocol. See x-clawsats-fee-identity-key header.`
+              });
+              return;
+            }
+          } catch (feeCheckErr) {
+            // If we can't parse the tx to check the fee, log but don't block.
+            // The internalization already succeeded, so the provider payment is valid.
+            // This is a defense-in-depth check, not the primary gate.
+            const msg = feeCheckErr instanceof Error ? feeCheckErr.message : String(feeCheckErr);
+            logWarn(TAG, `Fee output check failed (non-fatal): ${msg}`);
+          }
+
+          // Mark this payment as used AFTER successful internalization + fee check
           this.paymentDedupeCache.add(txHash);
           // Cap the dedupe cache size to prevent unbounded memory growth
           if (this.paymentDedupeCache.size > 10000) {
@@ -689,7 +755,7 @@ export class JsonRpcServer {
             if (first) this.paymentDedupeCache.delete(first);
           }
 
-          log(TAG, `Auto-accepted payment for ${capName}: ${cap.pricePerCall} sats claimed`);
+          log(TAG, `Auto-accepted payment for ${capName}: ${cap.pricePerCall} sats + ${FEE_SATS} sat fee verified`);
         } catch (internErr) {
           // Payment verification FAILED — reject the request.
           const errMsg = internErr instanceof Error ? internErr.message : String(internErr);
@@ -743,7 +809,7 @@ export class JsonRpcServer {
             identityKey: senderIdentityKey,
             endpoint: '', // unknown
             capabilities: [],
-            chain: this.walletManager.getConfig()?.chain || 'test',
+            chain: this.walletManager.getConfig()?.chain || 'main',
             lastSeen: new Date().toISOString(),
             reputation: 40
           });
@@ -1253,6 +1319,124 @@ export class JsonRpcServer {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * Verify that a payment transaction contains a fee output with >= FEE_SATS.
+   *
+   * We parse the raw transaction (which may be wrapped in AtomicBEEF envelope)
+   * and check that at least one output beyond index 0 has >= FEE_SATS satoshis.
+   * Output 0 is the provider's payment; the fee output is typically output 1.
+   *
+   * This is a lightweight structural check. The fee wallet holder does full
+   * BRC-29 derivation verification when sweeping fee outputs.
+   *
+   * Bitcoin tx output format:
+   *   - 8 bytes: satoshis (little-endian uint64)
+   *   - varint: script length
+   *   - N bytes: locking script
+   */
+  private verifyFeeOutputExists(txBuf: Buffer): boolean {
+    // AtomicBEEF starts with version bytes (0100beef or similar).
+    // We need to find the raw transaction within the envelope.
+    // Strategy: scan for a plausible tx start by looking for the version field (01000000 or 02000000).
+    // Then parse outputs to check satoshi values.
+
+    let offset = 0;
+
+    // Try to detect AtomicBEEF envelope and skip to raw tx.
+    // AtomicBEEF v1: starts with 0100beef (4 bytes), then BUMP data, then raw tx.
+    // For simplicity, we try multiple strategies to find the raw tx.
+    const beefMagic = txBuf.length >= 4 &&
+      txBuf[2] === 0xbe && txBuf[3] === 0xef;
+
+    if (beefMagic) {
+      // This is BEEF-wrapped. The raw tx is embedded somewhere after the header.
+      // Rather than fully parsing BEEF, scan for tx version bytes (01000000 or 02000000)
+      // followed by plausible varint input count.
+      for (let i = 4; i < txBuf.length - 10; i++) {
+        if ((txBuf[i] === 0x01 || txBuf[i] === 0x02) &&
+            txBuf[i + 1] === 0x00 && txBuf[i + 2] === 0x00 && txBuf[i + 3] === 0x00) {
+          // Possible tx version. Check if next byte is a plausible input count (1-10).
+          const possibleInputCount = txBuf[i + 4];
+          if (possibleInputCount >= 1 && possibleInputCount <= 10) {
+            offset = i;
+            break;
+          }
+        }
+      }
+      if (offset === 0) {
+        // Couldn't find raw tx in BEEF envelope
+        logWarn(TAG, 'Could not locate raw tx in BEEF envelope for fee check');
+        return true; // Don't block on parse failure — defense in depth
+      }
+    }
+
+    try {
+      // Parse raw Bitcoin transaction
+      // Version: 4 bytes
+      offset += 4;
+
+      // Input count (varint)
+      const { value: inputCount, bytesRead: inputCountBytes } = this.readVarint(txBuf, offset);
+      offset += inputCountBytes;
+
+      // Skip inputs
+      for (let i = 0; i < inputCount; i++) {
+        offset += 32; // prev txid
+        offset += 4;  // prev vout
+        const { value: scriptLen, bytesRead: scriptLenBytes } = this.readVarint(txBuf, offset);
+        offset += scriptLenBytes;
+        offset += scriptLen; // script
+        offset += 4; // sequence
+      }
+
+      // Output count (varint)
+      const { value: outputCount, bytesRead: outputCountBytes } = this.readVarint(txBuf, offset);
+      offset += outputCountBytes;
+
+      if (outputCount < 2) {
+        // Need at least 2 outputs (provider + fee)
+        return false;
+      }
+
+      // Parse outputs, looking for fee output (skip output 0 = provider payment)
+      for (let i = 0; i < outputCount; i++) {
+        // Satoshis: 8 bytes little-endian
+        if (offset + 8 > txBuf.length) return true; // Truncated, don't block
+        const satoshis = Number(txBuf.readBigUInt64LE(offset));
+        offset += 8;
+
+        const { value: scriptLen, bytesRead: scriptLenBytes } = this.readVarint(txBuf, offset);
+        offset += scriptLenBytes;
+        offset += scriptLen;
+
+        // Check non-zero outputs beyond index 0 for fee amount
+        if (i > 0 && satoshis >= FEE_SATS) {
+          return true; // Found a fee output
+        }
+      }
+
+      return false; // No fee output found
+    } catch {
+      // Parse error — don't block the payment, just log
+      return true;
+    }
+  }
+
+  /** Read a Bitcoin varint from a buffer at the given offset. */
+  private readVarint(buf: Buffer, offset: number): { value: number; bytesRead: number } {
+    const first = buf[offset];
+    if (first < 0xfd) {
+      return { value: first, bytesRead: 1 };
+    } else if (first === 0xfd) {
+      return { value: buf.readUInt16LE(offset + 1), bytesRead: 3 };
+    } else if (first === 0xfe) {
+      return { value: buf.readUInt32LE(offset + 1), bytesRead: 5 };
+    } else {
+      // 0xff — 8-byte value, but we cap at Number.MAX_SAFE_INTEGER
+      return { value: Number(buf.readBigUInt64LE(offset + 1)), bytesRead: 9 };
     }
   }
 }

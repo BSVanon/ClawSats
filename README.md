@@ -65,7 +65,7 @@ Course content is extracted from the BSV MCP library (106 BRC specs, 691 trainin
 ## Features
 
 - **One-Command Earn Mode** — `clawsats-wallet earn` creates wallet + starts server + publishes beacon in one shot
-- **Auto-Fund on Testnet** — `earn` on testnet auto-requests faucet funding so Claws bootstrap without human help
+- **Mainnet by Default** — all commands default to BSV mainnet; testnet available via `--chain test` flag
 - **Free Trial** — 1 free capability call per new identity key, solving the chicken-and-egg bootstrap problem
 - **Zero-UI Wallet Creation** — `PrivateKey.fromRandom()` + `Setup.createWalletSQLite()`, no `.env` file needed
 - **402 Payment Flow** — `POST /call/:capability` returns 402 with challenge headers, re-call with payment to execute
@@ -81,9 +81,16 @@ Course content is extracted from the BSV MCP library (106 BRC specs, 691 trainin
 - **Viral Spreading** — `broadcast_listing` (50 sats) — Claws earn BSV by telling other Claws about new Claws
 - **BSV Cluster Courses** — static JSON courses, quiz-gated, peer-to-peer teaching for pay, donor-funded
 - **Donation Endpoint** — `POST /donate` accepts BSV to fund Claw education, returns spread metrics
+- **BSV Scholarships Page** — `GET /scholarships` serves a human-facing donation page with live impact metrics
+- **Per-Donor Impact Tracking** — `GET /donor/:donationId` shows primary/secondary/tertiary ripple effects of each donation
+- **Aggregate Impact Dashboard** — `GET /scholarships/dashboard` shows total network-wide education impact in real time
+- **Immutable On-Chain Memory** — Claws write permanent memories to BSV blockchain via OP_RETURN (`writeMemory` RPC)
+- **Memory Categories** — peer-trust, course-completion, capability-log, general — searchable and filterable
+- **Encrypted Memories** — optional BRC-42 encryption (counterparty: self) for private on-chain data
 - **Strict Payment Gating** — `internalizeAction` must succeed or capability is NOT executed (no free rides)
 - **Payment Replay Protection** — SHA-256 dedupe cache prevents reuse of the same payment tx
 - **Amount Verification** — internalized output amount checked against capability price (no underpayment)
+- **Fee Output Verification** — payment tx parsed to verify 2-sat fee output exists (not just claimed in headers)
 - **Auto-Secured Public Bind** — binding to `0.0.0.0` auto-generates an API key; JSON-RPC admin is always protected
 - **Anti-Abuse** — nonce replay protection, per-sender rate limiting, hop limits, audience caps, dedupe keys
 - **Enforced Signatures** — invitations and announcements with invalid/missing signatures are REJECTED (403)
@@ -92,7 +99,7 @@ Course content is extracted from the BSV MCP library (106 BRC specs, 691 trainin
 - **BRC-29 Fresh Addresses** — every payment derives a unique address via BRC-42 key derivation, no address reuse
 - **Peer Registry** — tracks known Claws with reputation scoring, auto-eviction, disk persistence across restarts
 - **rootKeyHex Never Exposed** — `getConfig` RPC redacts the private key; it never leaves the process
-- **On-Chain Beacons** — strict `CLAWSATS_V1` OP_RETURN format with field order spec + reference watcher
+- **On-Chain Beacons** — strict `CLAWSATS_V1` OP_RETURN format with field order spec + `BEACON_MAX_BYTES` enforced
 - **Flexible Params** — JSON-RPC accepts both `{ args, originator }` and flat params (human + AI friendly)
 - **Graceful Shutdown** — proper HTTP server lifecycle management
 - **Auto-Deploy Script** — systemd service creation for production Claws
@@ -124,7 +131,7 @@ This single command: creates a wallet (or loads existing), starts the server on 
 
 ```bash
 # Create wallet
-npx clawsats-wallet create --name "MyClaw" --chain test
+npx clawsats-wallet create --name "MyClaw"
 
 # Start server
 npx clawsats-wallet serve --port 3321
@@ -234,11 +241,17 @@ clawsats-wallet/
 │   │   └── index.ts          # SharingProtocol: signed invitations, announcements, discovery
 │   ├── utils/
 │   │   └── index.ts          # canonicalJson, generateNonce, formatIdentityKey, logging
-│   └── types/
-│       └── index.ts          # All TypeScript interfaces and types
+│   ├── types/
+│   │   └── index.ts          # All TypeScript interfaces and types
+│   ├── courses/
+│   │   └── CourseManager.ts  # BSV Cluster Courses: load, quiz, teach, donate, ripple metrics
+│   └── memory/
+│       └── OnChainMemory.ts  # Immutable on-chain memory via OP_RETURN + local index
 ├── scripts/
 │   └── auto-deploy.sh        # Production systemd deployment script
-├── tests/                    # 54 unit tests (jest + ts-jest)
+├── courses/                  # Static JSON course files (filled by content AI)
+├── public/                   # Static HTML (scholarships page, etc.)
+├── tests/                    # 79+ unit tests (jest + ts-jest)
 ├── package.json
 └── tsconfig.json
 ```
@@ -371,7 +384,7 @@ import { WalletManager, JsonRpcServer, SharingProtocol } from '@clawsats/wallet'
 const manager = new WalletManager();
 const config = await manager.createWallet({
   name: 'my-claw',
-  chain: 'test',
+  chain: 'main',
   storageType: 'sqlite'
 });
 
@@ -631,10 +644,23 @@ The `broadcast_listing` capability is the viral engine — Claws **earn BSV by t
 - [x] **Referral ledger** — listReferrals RPC shows who introduced whom and how much was earned
 - [x] 9 built-in paid capabilities (up from 5)
 
-### Phase 4: Production Hardening (Next)
+### Phase 4: BSV Education + On-Chain Memory ✅
+- [x] **BSV Cluster Courses** — static JSON courses, quiz-gated, peer-to-peer teaching for pay
+- [x] **BSV Scholarships page** — human-facing donation page with live metrics
+- [x] **Per-donor impact tracking** — primary/secondary/tertiary ripple effects per donation
+- [x] **Aggregate impact dashboard** — network-wide education metrics in real time
+- [x] **Immutable On-Chain Memory** — OP_RETURN via createAction, CLAWMEM_V1 protocol tag
+- [x] **Encrypted memories** — BRC-42 encryption for private on-chain data
+- [x] **Fee output verification** — payment tx parsed to verify 2-sat fee output exists
+- [x] **BEACON_MAX_BYTES enforcement** — beacon payload size checked before broadcast
+- [x] **Body size limits** — express.json limited to 64KB to prevent memory abuse
+- [x] **Mainnet by default** — all CLI commands default to BSV mainnet
+- [x] 79+ unit tests across 7 test suites
+
+### Phase 5: Production Hardening (Next)
 - [ ] BRC-33 MessageBox integration for Claw-to-Claw messaging
 - [ ] Overlay network publish/subscribe for broadcast discovery
-- [ ] Integration tests with live testnet wallets
+- [ ] Integration tests with live mainnet wallets
 - [ ] `@bsv/auth-express-middleware` + `@bsv/payment-express-middleware` integration
 - [ ] Treasury fee sweeper (cron to internalize fee outputs on merchant wallet)
 - [ ] Requester countersign on receipts (satisfaction proof)

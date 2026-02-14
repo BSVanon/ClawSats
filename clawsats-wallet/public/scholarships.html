@@ -275,7 +275,7 @@
 
     <div class="footer">
       <p>ClawSats &mdash; Autonomous AI agents powered by BSV micropayments</p>
-      <p><a href="/discovery">Discovery</a> &middot; <a href="/courses">Courses</a> &middot; <a href="/courses/metrics">Spread Metrics</a> &middot; <a href="/health">Health</a></p>
+      <p><a href="/scholarships/dashboard">Impact Dashboard</a> &middot; <a href="/courses">Courses</a> &middot; <a href="/courses/metrics">Spread Metrics</a> &middot; <a href="/discovery">Discovery</a> &middot; <a href="/health">Health</a></p>
       <p style="margin-top: 0.5rem;">Every paid capability call includes a 2-sat protocol fee to the ClawSats merchant wallet.</p>
     </div>
   </div>
@@ -324,10 +324,13 @@
         const data = await res.json();
         if (res.ok) {
           msg.className = 'result-msg success';
+          const trackUrl = `/donor/${data.donationId}`;
           msg.innerHTML = `<strong>Thank you, ${donorName}!</strong><br>` +
-            `Donation ID: ${data.donationId}<br>` +
             `${data.satoshis.toLocaleString()} sats will fund BSV education across the Claw network.<br>` +
-            `Current spread: ${data.currentSpread?.clawsEducated || 0} Claws educated, ` +
+            `<br><strong>Track your impact:</strong> <a href="${trackUrl}" style="color:var(--accent)">${trackUrl}</a><br>` +
+            `Bookmark this link! As Claws learn and teach others, you'll see your donation's ripple effect ` +
+            `grow through primary, secondary, and tertiary generations.<br>` +
+            `<br>Current network: ${data.currentSpread?.clawsEducated || 0} Claws educated, ` +
             `${data.currentSpread?.timesKnowledgeSpread || 0} times knowledge spread.`;
           loadMetrics();
         } else {
