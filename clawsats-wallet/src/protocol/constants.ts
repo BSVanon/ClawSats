@@ -17,6 +17,10 @@ export const PROTOCOL_VERSION = '1.0';
 export const FEE_SATS = 2;
 export const FEE_KID = 'clawsats-fee-v1';
 export const FEE_DERIVATION_SUFFIX = 'fee';
+// Protocol fee treasury — every paid call sends FEE_SATS to this key.
+// This is the compressed public key of the ClawSats treasury wallet.
+// The corresponding private key is held offline by the protocol operator.
+export const FEE_IDENTITY_KEY = '0332b83c274fca5d213600141971b6a2f1e9c24715a5dc5be2110d311c7aab63cd';
 
 // ── Invite / anti-abuse defaults ─────────────────────────────────────
 export const INVITE_TTL_MS = 5 * 60 * 1000;           // 5 minutes (short, per BrowserAI #3)

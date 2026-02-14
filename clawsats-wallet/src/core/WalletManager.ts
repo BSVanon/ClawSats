@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { WalletConfig, CreateWalletOptions, ExpectedOutput, Chain } from '../types';
 import {
-  FEE_SATS, FEE_KID, FEE_DERIVATION_SUFFIX, DEFAULT_TAAL_API_KEY
+  FEE_SATS, FEE_KID, FEE_DERIVATION_SUFFIX, FEE_IDENTITY_KEY, DEFAULT_TAAL_API_KEY
 } from '../protocol/constants';
 
 export class WalletManager {
@@ -159,9 +159,9 @@ export class WalletManager {
       'x-clawsats-fee-derivation-suffix': FEE_DERIVATION_SUFFIX
     };
 
-    if (this.config?.clawsats.feeIdentityKey) {
-      headers['x-clawsats-fee-identity-key'] = this.config.clawsats.feeIdentityKey;
-    }
+    // Always include the protocol fee treasury key so payers know
+    // where to direct the 2-sat fee output.
+    headers['x-clawsats-fee-identity-key'] = FEE_IDENTITY_KEY;
 
     return headers;
   }

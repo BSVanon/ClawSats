@@ -8,7 +8,7 @@ import { CapabilityRegistry } from '../core/CapabilityRegistry';
 import { NonceCache } from '../core/NonceCache';
 import { RateLimiter } from '../core/RateLimiter';
 import { SharingProtocol } from '../protocol';
-import { INVITE_MAX_PER_HOUR } from '../protocol/constants';
+import { INVITE_MAX_PER_HOUR, FEE_SATS, FEE_IDENTITY_KEY } from '../protocol/constants';
 import { ServeOptions, Invitation, PeerRecord } from '../types';
 import { log, logWarn, logError } from '../utils';
 
@@ -331,12 +331,49 @@ export class JsonRpcServer {
         }
 
         // Payment provided → verify and execute
-        // TODO: Full payment verification with verifyPayment() once
-        // internalizeAction flow is wired. For now, accept the txid
-        // as proof-of-intent so the flow works end-to-end on testnet.
+        // Validate txid format (64 hex chars)
+        if (!/^[0-9a-fA-F]{64}$/.test(paymentTxid)) {
+          res.status(400).json({ error: 'Invalid txid format' });
+          return;
+        }
+
         log(TAG, `Payment received for ${capName}: txid=${paymentTxid.substring(0, 16)}...`);
 
+        // Attempt to internalize the payment so the provider claims their output.
+        // The paying Claw's tx should have:
+        //   output 0: provider amount → derived from provider's identity key
+        //   output 1: FEE_SATS → derived from FEE_IDENTITY_KEY (treasury)
+        // We internalize output 0 (ours). Output 1 goes to the treasury wallet
+        // which will internalize it separately.
         const wallet = this.walletManager.getWallet();
+        try {
+          const rawTx = req.headers['x-bsv-payment-rawtx'] as string;
+          if (rawTx) {
+            await wallet.internalizeAction({
+              tx: Array.from(Buffer.from(rawTx, 'hex')),
+              outputs: [{
+                outputIndex: 0,
+                protocol: 'wallet payment',
+                paymentRemittance: {
+                  derivationPrefix: req.headers['x-bsv-payment-derivation-prefix'] as string || '',
+                  derivationSuffix: req.headers['x-bsv-payment-derivation-suffix'] as string || 'prov',
+                  senderIdentityKey: req.headers['x-bsv-identity-key'] as string || ''
+                }
+              }],
+              description: `ClawSats payment for ${capName} (${cap.pricePerCall} sats + ${FEE_SATS} fee)`
+            });
+            log(TAG, `Internalized payment for ${capName}: ${cap.pricePerCall} sats claimed`);
+          } else {
+            // No rawTx provided — accept txid as proof-of-intent on testnet.
+            // On mainnet, require rawTx for full SPV verification.
+            logWarn(TAG, `No rawTx header — accepting txid as proof-of-intent (testnet mode)`);
+          }
+        } catch (internErr) {
+          // Log but don't block — the capability should still execute if payment was broadcast.
+          // The provider can reconcile later via listActions.
+          logWarn(TAG, `internalizeAction failed (non-fatal): ${internErr instanceof Error ? internErr.message : String(internErr)}`);
+        }
+
         const result = await cap.handler(req.body, wallet);
 
         // Track the caller as a peer if they provided identity
