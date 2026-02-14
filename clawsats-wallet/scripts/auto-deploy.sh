@@ -222,7 +222,7 @@ User=$DEFAULT_USER
 Group=$DEFAULT_GROUP
 WorkingDirectory=$DEFAULT_INSTALL_DIR
 Environment=NODE_ENV=production
-ExecStart=$DEFAULT_INSTALL_DIR/bin/wallet serve --config $DEFAULT_DATA_DIR/config/wallet-config.json
+ExecStart=/usr/bin/node $DEFAULT_INSTALL_DIR/clawsats-wallet/dist/cli/index.js serve --config $DEFAULT_DATA_DIR/config/wallet-config.json
 Restart=on-failure
 RestartSec=10
 StandardOutput=journal
@@ -286,10 +286,8 @@ share_capability() {
     # Generate invitation
     local invitation_file="/tmp/clawsats-invitation-$(date +%s).json"
     
-    $DEFAULT_INSTALL_DIR/bin/wallet share \
-        --claw-id "$CLAW_ID" \
-        --capability payment \
-        --auto-deploy true \
+    /usr/bin/node $DEFAULT_INSTALL_DIR/clawsats-wallet/dist/cli/index.js share \
+        --recipient "http://localhost:$DEFAULT_PORT" \
         --output "$invitation_file"
     
     if [[ -f "$invitation_file" ]]; then

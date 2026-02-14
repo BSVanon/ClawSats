@@ -228,12 +228,26 @@ export class WalletManager {
     };
   }
 
-  private async fundWithTestnet(identityKey: string, _faucetUrl: string): Promise<void> {
+  private async fundWithTestnet(identityKey: string, faucetUrl: string): Promise<void> {
     try {
       console.log(`[wallet] Requesting testnet funding for: ${identityKey.substring(0, 16)}...`);
-      console.log('[wallet] Note: In production, implement actual faucet integration');
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      console.log('[wallet] Testnet funding complete (simulated)');
+      const res = await fetch(faucetUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identityKey }),
+        signal: AbortSignal.timeout(15000)
+      });
+      if (!res.ok) {
+        const body = await res.text();
+        console.warn(`[wallet] Faucet returned ${res.status}: ${body}`);
+        return;
+      }
+      const data: any = await res.json();
+      if (data.funded) {
+        console.log(`[wallet] Testnet funding complete: ${data.satoshis || '?'} sats received`);
+      } else {
+        console.warn(`[wallet] Faucet declined: ${data.reason || data.error || 'unknown'}`);
+      }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.warn('[wallet] Failed to fund with testnet:', msg);
@@ -247,7 +261,9 @@ export class WalletManager {
     }
 
     const configPath = join(configDir, 'wallet-config.json');
-    writeFileSync(configPath, JSON.stringify(config, null, 2));
+    writeFileSync(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
     console.log(`[wallet] Configuration saved to: ${configPath}`);
+    console.warn(`[wallet] ⚠️  ${configPath} contains rootKeyHex (private key). Protect this file!`);
+    console.warn(`[wallet]    chmod 600 ${configPath} — never commit to git or expose publicly.`);
   }
 }

@@ -394,7 +394,11 @@ export class JsonRpcServer {
         if (!bsvPaymentHeader) {
           // No payment yet → return 402 with challenge headers (BRC-105 §5.2)
           const challenge = this.walletManager.createPaymentChallenge(cap.pricePerCall);
+          const providerKey = this.walletManager.getConfig()?.identityKey || '';
           res.status(402);
+          // Set the provider's identity key so the payer knows who to derive the output for.
+          // Without this, the client can't build a correct BRC-29 payment output.
+          res.setHeader('x-bsv-identity-key', providerKey);
           for (const [key, value] of Object.entries(challenge)) {
             res.setHeader(key, value);
           }

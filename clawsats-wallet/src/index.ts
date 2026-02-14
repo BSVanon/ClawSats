@@ -1,6 +1,7 @@
 export { WalletManager } from './core/WalletManager';
 export { PeerRegistry } from './core/PeerRegistry';
 export { CapabilityRegistry } from './core/CapabilityRegistry';
+export { PaymentHelper } from './core/PaymentHelper';
 export { NonceCache } from './core/NonceCache';
 export { RateLimiter } from './core/RateLimiter';
 export { JsonRpcServer } from './server/JsonRpcServer';
