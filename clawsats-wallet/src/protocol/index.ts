@@ -1,4 +1,4 @@
-import { randomBytes } from 'crypto';
+import { randomBytes, createHash } from 'crypto';
 import {
   Invitation,
   CapabilityAnnouncement,
@@ -7,6 +7,7 @@ import {
   WalletConfig
 } from '../types';
 import { generateNonce, canonicalJson } from '../utils';
+import { PROTOCOL_ID, PROTOCOL_VERSION, INVITE_TTL_MS } from './constants';
 
 /**
  * SharingProtocol handles wallet capability sharing between Claws.
@@ -48,24 +49,31 @@ export class SharingProtocol {
     expiresInMs?: number;
     autoDeployScript?: string;
     message?: string;
+    recipientEndpoint?: string;
   } = {}): Promise<Invitation> {
     const {
       capabilities = this.config.capabilities,
-      expiresInMs = 7 * 24 * 60 * 60 * 1000,
-      autoDeployScript = 'https://clawsats.org/deploy/v1.sh'
+      expiresInMs = INVITE_TTL_MS,
+      autoDeployScript = 'https://clawsats.org/deploy/v1.sh',
+      recipientEndpoint
     } = options;
 
+    const nonce = randomBytes(16).toString('hex');
+
     const invitation: Invitation = {
+      protocol: PROTOCOL_ID,
       type: 'wallet-invitation',
-      version: '1.0',
+      version: PROTOCOL_VERSION,
       invitationId: `invite-${Date.now()}-${randomBytes(4).toString('hex')}`,
+      nonce,
       sender: {
         clawId: `claw://${this.config.identityKey.substring(0, 16)}`,
         identityKey: this.config.identityKey,
         endpoint: this.config.endpoints.jsonrpc
       },
       recipient: {
-        clawId: recipientClawId
+        clawId: recipientClawId,
+        endpoint: recipientEndpoint
       },
       walletConfig: {
         chain: this.config.chain,
@@ -171,6 +179,9 @@ export class SharingProtocol {
     }
     if (!invitation.sender?.identityKey) {
       return { valid: false, reason: 'Missing sender identity key' };
+    }
+    if (!invitation.nonce) {
+      return { valid: false, reason: 'Missing nonce (replay protection required)' };
     }
     if (new Date(invitation.expires) < new Date()) {
       return { valid: false, reason: 'Invitation expired' };

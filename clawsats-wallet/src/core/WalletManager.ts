@@ -4,11 +4,9 @@ import { randomBytes } from 'crypto';
 import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { WalletConfig, CreateWalletOptions, ExpectedOutput, Chain } from '../types';
-
-const CLAWSATS_FEE_SATS = 2;
-const CLAWSATS_FEE_KID = 'clawsats-fee-v1';
-const CLAWSATS_FEE_SUFFIX = 'fee';
-const DEFAULT_TAAL_API_KEY = 'testnet_0e6cf72133b43ea2d7861da2a38684e3';
+import {
+  FEE_SATS, FEE_KID, FEE_DERIVATION_SUFFIX, DEFAULT_TAAL_API_KEY
+} from '../protocol/constants';
 
 export class WalletManager {
   // Using 'any' to avoid cross-package @bsv/sdk type mismatches
@@ -86,8 +84,8 @@ export class WalletManager {
         'verifySignature'
       ],
       clawsats: {
-        feeKeyId: CLAWSATS_FEE_KID,
-        defaultFeeSuffix: CLAWSATS_FEE_SUFFIX
+        feeKeyId: FEE_KID,
+        defaultFeeSuffix: FEE_DERIVATION_SUFFIX
       }
     };
 
@@ -156,9 +154,9 @@ export class WalletManager {
       'x-bsv-payment-version': '1.0',
       'x-bsv-payment-satoshis-required': providerAmount.toString(),
       'x-bsv-payment-derivation-prefix': derivationPrefix,
-      'x-clawsats-fee-satoshis-required': String(CLAWSATS_FEE_SATS),
-      'x-clawsats-fee-kid': CLAWSATS_FEE_KID,
-      'x-clawsats-fee-derivation-suffix': CLAWSATS_FEE_SUFFIX
+      'x-clawsats-fee-satoshis-required': String(FEE_SATS),
+      'x-clawsats-fee-kid': FEE_KID,
+      'x-clawsats-fee-derivation-suffix': FEE_DERIVATION_SUFFIX
     };
 
     if (this.config?.clawsats.feeIdentityKey) {
@@ -178,7 +176,7 @@ export class WalletManager {
       return false;
     }
 
-    if (feeOutput.amount < CLAWSATS_FEE_SATS) {
+    if (feeOutput.amount < FEE_SATS) {
       return false;
     }
 

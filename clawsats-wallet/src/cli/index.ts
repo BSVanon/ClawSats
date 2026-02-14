@@ -309,6 +309,156 @@ program
     }
   });
 
+// Earn command — one-command UX (BrowserAI #7)
+// "If it's more than a minute or two, most Claws won't bother."
+program
+  .command('earn')
+  .description('One command: create wallet + start server + publish beacon. You are live.')
+  .option('-p, --port <port>', 'Port to listen on', '3321')
+  .option('-H, --host <host>', 'Host to bind to', '0.0.0.0')
+  .option('-c, --chain <chain>', 'Blockchain network (test/main)', 'test')
+  .option('-n, --name <name>', 'Wallet name', `claw-${Date.now()}`)
+  .option('--endpoint <url>', 'Public endpoint URL to advertise')
+  .option('--no-beacon', 'Skip on-chain beacon publication')
+  .action(async (options) => {
+    try {
+      const port = parseInt(options.port, 10);
+      const host = options.host;
+      const publicEndpoint = options.endpoint || `http://${host}:${port}`;
+
+      // Step 1: Create or load wallet
+      const configPath = join(process.cwd(), 'config/wallet-config.json');
+      if (existsSync(configPath)) {
+        console.log('Loading existing wallet...');
+        await walletManager.loadWallet(configPath);
+      } else {
+        console.log('Creating new wallet...');
+        await walletManager.createWallet({
+          name: options.name,
+          chain: options.chain,
+          storageType: 'sqlite'
+        });
+      }
+
+      const config = walletManager.getConfig()!;
+      console.log(`\n⚡ Identity: ${config.identityKey.substring(0, 24)}...`);
+      console.log(`⚡ Chain:    ${config.chain}`);
+
+      // Step 2: Start server
+      const server = new JsonRpcServer(walletManager, {
+        port,
+        host,
+        cors: true,
+        enableDiscovery: true
+      });
+      await server.start();
+
+      // Step 3: Publish beacon (optional)
+      if (options.beacon !== false) {
+        console.log('\n📡 Publishing on-chain beacon...');
+        try {
+          const wallet = walletManager.getWallet();
+          const beaconPayload = JSON.stringify({
+            v: '1.0', id: config.identityKey, ep: publicEndpoint,
+            ch: config.chain, cap: server.getCapabilityRegistry().listNames(),
+            ts: new Date().toISOString(), sig: ''
+          });
+          const opReturnScript = `006a${Buffer.from('CLAWSATS_V1').toString('hex')}${Buffer.from(beaconPayload).toString('hex')}`;
+          const result = await wallet.createAction({
+            description: 'ClawSats beacon',
+            outputs: [{ satoshis: 0, script: opReturnScript, outputDescription: 'CLAWSATS_V1 beacon' }],
+            labels: ['clawsats-beacon'],
+            options: { signAndProcess: true, acceptDelayedBroadcast: true }
+          });
+          console.log(`  Beacon TXID: ${result.txid}`);
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.log(`  Beacon skipped (${msg}). Fund wallet to enable.`);
+        }
+      }
+
+      // Summary
+      const caps = server.getCapabilityRegistry().listNames();
+      console.log(`\n🟢 YOU ARE LIVE`);
+      console.log(`  Manifest: ${publicEndpoint}/discovery`);
+      console.log(`  Invite:   POST ${publicEndpoint}/wallet/invite`);
+      console.log(`  Paid capabilities: ${caps.join(', ')}`);
+      console.log(`\n  Share with another Claw:`);
+      console.log(`    clawsats-wallet share -r http://<peer>:3321`);
+
+      // Graceful shutdown
+      const shutdown = async () => {
+        console.log('\nShutting down...');
+        await server.stop();
+        process.exit(0);
+      };
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
+
+    } catch (error) {
+      console.error('❌ Earn mode failed:', error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
+
+// Watch command — scan for CLAWSATS_V1 beacons (BrowserAI #6)
+program
+  .command('watch')
+  .description('Scan for CLAWSATS_V1 on-chain beacons and probe discovered Claws')
+  .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
+  .option('--limit <n>', 'Max beacons to process', '20')
+  .action(async (options) => {
+    try {
+      // Load wallet
+      if (!walletManager.getConfig()) {
+        const configPath = join(process.cwd(), options.config);
+        if (!existsSync(configPath)) {
+          console.error('❌ Config not found. Create a wallet first.');
+          process.exit(1);
+        }
+        await walletManager.loadWallet(configPath);
+      }
+
+      const wallet = walletManager.getWallet();
+      console.log('🔭 Scanning for CLAWSATS_V1 beacons...');
+
+      // Query wallet for beacon-labeled actions
+      try {
+        const actions = await wallet.listActions({
+          labels: ['clawsats-beacon'],
+          limit: parseInt(options.limit, 10),
+          includeOutputs: true
+        });
+
+        if (!actions.actions?.length) {
+          console.log('  No beacons found in local wallet history.');
+          console.log('  In production, this will scan overlay networks and on-chain OP_RETURNs.');
+          return;
+        }
+
+        console.log(`  Found ${actions.actions.length} beacon(s):`);
+        for (const action of actions.actions) {
+          console.log(`  • TXID: ${action.txid}`);
+        }
+      } catch {
+        console.log('  Beacon scanning requires a funded wallet with history.');
+        console.log('  For now, use "discover" to probe known endpoints directly:');
+        console.log('    clawsats-wallet discover http://<peer>:3321');
+      }
+
+      console.log('\n  Reference watcher: in production, this command will:');
+      console.log('    1. Scan overlay networks for CLAWSATS_V1 OP_RETURNs');
+      console.log('    2. Parse strict beacon payload (v, id, ep, ch, cap, ts, sig)');
+      console.log('    3. Verify beacon signature against id (pubkey)');
+      console.log('    4. Probe discovered endpoints via /discovery');
+      console.log('    5. Surface new gigs to the local Claw');
+
+    } catch (error) {
+      console.error('❌ Watch failed:', error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
+
 // Config command
 program
   .command('config')

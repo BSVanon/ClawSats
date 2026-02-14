@@ -16,15 +16,16 @@ This wallet package is the foundational building block — it gives every Claw a
 
 ## Features
 
+- **One-Command Earn Mode** — `clawsats-wallet earn` creates wallet + starts server + publishes beacon in one shot
 - **Zero-UI Wallet Creation** — `PrivateKey.fromRandom()` + `Setup.createWalletSQLite()`, no `.env` file needed
-- **Headless JSON-RPC Server** — all BRC-100 methods exposed over HTTP
 - **402 Payment Flow** — `POST /call/:capability` returns 402 with challenge headers, re-call with payment to execute
-- **Built-in Paid Capabilities** — `echo` (10 sats, proves the flow) and `broadcast_listing` (50 sats, the spreading flywheel)
+- **Verifiable Capabilities** — `sign_message`, `hash_commit`, `timestamp_attest` — cryptographically provable results
+- **Viral Spreading** — `broadcast_listing` (50 sats) — Claws earn BSV by telling other Claws about new Claws
+- **Anti-Abuse** — nonce replay protection, per-sender rate limiting, hop limits, audience caps, dedupe keys
+- **Signed Handshake** — invitations include `protocol`, `nonce`, `expires`, `signature` — deterministic receiver behavior
+- **Hardcoded Fee Key** — fee constants baked into `protocol/constants.ts` — no lookup dependency, no SPOF
 - **Peer Registry** — tracks known Claws with reputation scoring, auto-eviction of stale peers
-- **Invitation Handshake** — `POST /wallet/invite` accepts invitations and responds with capability announcement
-- **Broadcast Announce** — `POST /wallet/announce` receives capability announcements from other Claws
-- **Signed Protocol Messages** — invitations, announcements, and discovery queries are cryptographically signed
-- **On-Chain Beacons** — `clawsats-wallet announce` publishes `CLAWSATS_V1` OP_RETURN for on-chain discovery
+- **On-Chain Beacons** — strict `CLAWSATS_V1` OP_RETURN format with field order spec + reference watcher
 - **Flexible Params** — JSON-RPC accepts both `{ args, originator }` and flat params (human + AI friendly)
 - **Graceful Shutdown** — proper HTTP server lifecycle management
 - **Auto-Deploy Script** — systemd service creation for production Claws
@@ -44,17 +45,21 @@ npm install
 npm run build
 ```
 
-### Create a Wallet
+### Earn Mode (Fastest Path)
 
 ```bash
-npx clawsats-wallet create --name "MyClaw" --chain test
+npx clawsats-wallet earn
 ```
 
-This generates a random root key, creates a SQLite-backed BRC-100 wallet, and saves the config to `config/wallet-config.json`.
+This single command: creates a wallet (or loads existing), starts the server on `0.0.0.0:3321`, publishes an on-chain beacon, and prints "YOU ARE LIVE". Done.
 
-### Start the Server
+### Manual Setup
 
 ```bash
+# Create wallet
+npx clawsats-wallet create --name "MyClaw" --chain test
+
+# Start server
 npx clawsats-wallet serve --port 3321
 ```
 
@@ -95,14 +100,36 @@ curl -X POST http://localhost:3321/call/echo \
 # Send invitation directly to a running Claw (HTTP POST)
 npx clawsats-wallet share -r http://1.2.3.4:3321
 
-# Or save invitation to file
-npx clawsats-wallet share -r claw://friend-id -o invitation.json
-
 # Discover a remote Claw's capabilities
 npx clawsats-wallet discover http://1.2.3.4:3321
 
 # Publish on-chain beacon for discovery
 npx clawsats-wallet announce --endpoint http://your-vps:3321
+
+# Scan for beacons
+npx clawsats-wallet watch
+```
+
+### Verifiable Capabilities (402 Flow)
+
+```bash
+# sign_message — verifiable by anyone with the pubkey
+curl -X POST http://localhost:3321/call/sign_message \
+  -H "Content-Type: application/json" \
+  -H "x-bsv-payment-txid: <txid>" \
+  -d '{"message":"hello world"}'
+
+# hash_commit — verifiable by re-hashing
+curl -X POST http://localhost:3321/call/hash_commit \
+  -H "Content-Type: application/json" \
+  -H "x-bsv-payment-txid: <txid>" \
+  -d '{"payload":"my important data"}'
+
+# timestamp_attest — provable time witness
+curl -X POST http://localhost:3321/call/timestamp_attest \
+  -H "Content-Type: application/json" \
+  -H "x-bsv-payment-txid: <txid>" \
+  -d '{"hash":"abc123..."}'
 ```
 
 ## Architecture
@@ -114,12 +141,15 @@ clawsats-wallet/
 │   ├── core/
 │   │   ├── WalletManager.ts  # Wallet creation, loading, payment challenges, verification
 │   │   ├── PeerRegistry.ts   # In-memory registry of known Claws with reputation
-│   │   └── CapabilityRegistry.ts  # Paid capability registration (echo, broadcast_listing)
+│   │   ├── CapabilityRegistry.ts  # Paid capabilities (echo, sign_message, hash_commit, ...)
+│   │   ├── NonceCache.ts     # Sliding-window nonce cache for invite replay protection
+│   │   └── RateLimiter.ts    # Per-sender sliding-window rate limiter
 │   ├── server/
 │   │   └── JsonRpcServer.ts  # Express + JSON-RPC 2.0 + /wallet/invite + /call/:cap 402
 │   ├── cli/
-│   │   └── index.ts          # Commander CLI: create, serve, share, discover, announce, ...
+│   │   └── index.ts          # Commander CLI: earn, create, serve, share, discover, ...
 │   ├── protocol/
+│   │   ├── constants.ts      # Hardcoded protocol constants (fee key, limits, format)
 │   │   └── index.ts          # SharingProtocol: signed invitations, announcements, discovery
 │   ├── utils/
 │   │   └── index.ts          # canonicalJson, generateNonce, formatIdentityKey, logging
@@ -215,11 +245,13 @@ Requester                          Provider
 
 | Command | Description |
 |---------|-------------|
+| `earn` | **One command**: create wallet + start server + publish beacon |
 | `create` | Create a new BRC-100 wallet |
 | `serve` | Start headless JSON-RPC server |
 | `share` | Send invitation to a Claw (HTTP or file) |
 | `discover` | Probe a remote Claw's capabilities |
 | `announce` | Publish CLAWSATS_V1 OP_RETURN beacon on-chain |
+| `watch` | Scan for CLAWSATS_V1 beacons and probe discovered Claws |
 | `health` | Check wallet server health |
 | `config` | Show wallet configuration |
 
@@ -280,20 +312,45 @@ EXPOSE 3321
 CMD ["node", "dist/cli.js", "serve"]
 ```
 
+## Protocol Constants (Hardcoded)
+
+All fee and limit values are hardcoded in `src/protocol/constants.ts`. No lookups, no servers, no SPOF.
+
+| Constant | Value | Purpose |
+|----------|-------|---------|
+| `FEE_SATS` | 2 | Mandatory protocol fee per paid call |
+| `FEE_KID` | `clawsats-fee-v1` | Fee key identifier |
+| `INVITE_TTL_MS` | 300,000 (5 min) | Invitation expiry |
+| `INVITE_MAX_PER_HOUR` | 20 | Receiver-enforced rate limit |
+| `BROADCAST_HOP_LIMIT` | 2 | Max relay hops for broadcast_listing |
+| `BROADCAST_AUDIENCE_LIMIT` | 10 | Max peers per paid broadcast |
+| `MVP_WALLET_INTERFACE` | `@bsv/wallet-toolbox::WalletInterface` | Locked wallet interface |
+| `MVP_PROOF_FORMAT` | `txid+rawtx` | Payment proof format |
+
 ## How Claws Spread
 
 ```
-1. Claw A boots → creates wallet → starts server with echo + broadcast_listing
+1. clawsats-wallet earn  →  wallet + server + beacon in one command
 2. Claw A publishes OP_RETURN beacon: CLAWSATS_V1 + endpoint URL
-3. Claw B discovers beacon → probes /discovery → sees paid capabilities
-4. Claw B calls POST /call/echo → gets 402 → pays 10 sats + 2 fee → gets signed echo
-5. Claw B sends invitation to Claw A → POST /wallet/invite → both register as peers
-6. Claw C pays Claw A 50 sats to broadcast_listing → A tells B about C
+3. Claw B runs "watch" or discovers beacon → probes /discovery
+4. Claw B calls /call/sign_message → 402 → pays 5 sats + 2 fee → gets verifiable signature
+5. Claw B sends invitation (with nonce + TTL) → POST /wallet/invite → both register as peers
+6. Claw C pays Claw A 50 sats to broadcast_listing → A tells B about C (hop_limit enforced)
 7. B receives announcement → registers C as peer → network grows
-8. Each new Claw repeats from step 1
+8. Each new Claw runs "earn" and repeats from step 1
 ```
 
 The `broadcast_listing` capability is the viral engine — Claws **earn BSV by telling other Claws about new Claws**.
+
+## Anti-Abuse Protections
+
+- **Nonce replay cache** — every invitation requires a unique nonce; replays are rejected
+- **Short TTL** — invitations expire in 5 minutes (not days)
+- **Per-sender rate limiting** — max 20 invitations/hour per identity key
+- **Hop limit** — broadcast_listing stops relaying after 2 hops
+- **Audience cap** — max 10 peers contacted per paid broadcast
+- **Dedupe key** — same listing can't be broadcast repeatedly to the same peer set
+- **Payment required** — broadcast_listing always costs 50 sats (no free marketing)
 
 ## Roadmap
 
@@ -318,15 +375,29 @@ The `broadcast_listing` capability is the viral engine — Claws **earn BSV by t
 - [x] `discover` CLI — probe remote Claw endpoints
 - [x] `share` CLI — send invitations via direct HTTP POST
 
+### Phase 2.5: Protocol Hardening ✅ (BrowserAI Review)
+- [x] Signed invite handshake with `protocol`, `nonce`, `expires`, `signature`
+- [x] Nonce replay cache + TTL enforcement (5 min default)
+- [x] Per-sender rate limiting (20 invites/hour)
+- [x] Verifiable capabilities: `sign_message`, `hash_commit`, `timestamp_attest`
+- [x] Broadcast anti-abuse: hop_limit (2), audience_limit (10), dedupe_key
+- [x] Hardcoded fee key in `protocol/constants.ts` — no lookup dependency
+- [x] Locked MVP wallet interface + proof format in constants
+- [x] Strict OP_RETURN beacon format (field order: v, id, ep, ch, cap, ts, sig)
+- [x] Reference beacon watcher (`watch` CLI command)
+- [x] One-command `earn` mode — create + serve + beacon in one shot
+- [x] Receipt + BroadcastMeta types for future reputation plumbing
+
 ### Phase 3: Production Hardening (Next)
+- [ ] Full beacon watcher scanning overlay networks + on-chain OP_RETURNs
 - [ ] BRC-33 MessageBox integration for Claw-to-Claw messaging
 - [ ] Overlay network publish/subscribe for broadcast discovery
 - [ ] Integration tests with live testnet wallets
 - [ ] `@bsv/auth-express-middleware` + `@bsv/payment-express-middleware` integration
 - [ ] Full payment verification in 402 flow (internalizeAction)
 - [ ] Peer registry persistence to disk
+- [ ] Signed receipts + receipt validator + requester countersign
 - [ ] Key rotation and backup/recovery
-- [ ] Rate limiting and abuse prevention
 - [ ] Monitoring, alerting, and structured logging
 
 ## License

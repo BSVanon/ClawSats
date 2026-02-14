@@ -20,16 +20,20 @@ export interface WalletConfig {
 }
 
 export interface Invitation {
+  protocol: string;
   type: 'wallet-invitation';
   version: string;
   invitationId: string;
+  nonce: string;
   sender: {
     clawId: string;
     identityKey: string;
     endpoint: string;
+    manifestHash?: string;
   };
   recipient: {
     clawId: string;
+    endpoint?: string;
     publicKey?: string;
   };
   walletConfig: {
@@ -196,6 +200,16 @@ export interface BeaconData {
   timestamp: string;
 }
 
+export interface BeaconPayload {
+  v: string;
+  id: string;
+  ep: string;
+  ch: Chain;
+  cap: string[];
+  ts: string;
+  sig: string;
+}
+
 export interface InvitationAcceptance {
   type: 'invitation-acceptance';
   originalInvitationId: string;
@@ -206,6 +220,40 @@ export interface InvitationAcceptance {
   };
   capabilities: string[];
   timestamp: string;
+}
+
+export interface Receipt {
+  type: 'job-receipt';
+  version: string;
+  receiptId: string;
+  jobId: string;
+  capability: string;
+  provider: {
+    identityKey: string;
+    endpoint: string;
+  };
+  requester: {
+    identityKey: string;
+  };
+  payment: {
+    txid: string;
+    providerAmount: number;
+    feeAmount: number;
+  };
+  result: {
+    success: boolean;
+    hash?: string;
+  };
+  providerSignature: string;
+  requesterSignature?: string;
+  timestamp: string;
+}
+
+export interface BroadcastMeta {
+  hopCount: number;
+  maxHops: number;
+  originIdentityKey: string;
+  dedupeKey: string;
 }
 
 export interface ReputationScore {

@@ -5,7 +5,10 @@ import { JSONRPCServer } from 'json-rpc-2.0';
 import { WalletManager } from '../core/WalletManager';
 import { PeerRegistry } from '../core/PeerRegistry';
 import { CapabilityRegistry } from '../core/CapabilityRegistry';
+import { NonceCache } from '../core/NonceCache';
+import { RateLimiter } from '../core/RateLimiter';
 import { SharingProtocol } from '../protocol';
+import { INVITE_MAX_PER_HOUR } from '../protocol/constants';
 import { ServeOptions, Invitation, PeerRecord } from '../types';
 import { log, logWarn, logError } from '../utils';
 
@@ -18,6 +21,8 @@ export class JsonRpcServer {
   private walletManager: WalletManager;
   private peerRegistry: PeerRegistry;
   private capabilityRegistry: CapabilityRegistry;
+  private nonceCache: NonceCache;
+  private inviteRateLimiter: RateLimiter;
   private port: number;
   private host: string;
   private apiKey?: string;
@@ -26,6 +31,8 @@ export class JsonRpcServer {
     this.walletManager = walletManager;
     this.peerRegistry = new PeerRegistry();
     this.capabilityRegistry = new CapabilityRegistry();
+    this.nonceCache = new NonceCache();
+    this.inviteRateLimiter = new RateLimiter(INVITE_MAX_PER_HOUR, 60 * 60 * 1000);
     this.port = options.port || 3321;
     this.host = options.host || 'localhost';
     this.apiKey = options.apiKey;
@@ -210,11 +217,24 @@ export class JsonRpcServer {
           return;
         }
 
+        // Rate limit by sender identity key
+        const senderKey = invitation.sender?.identityKey || 'unknown';
+        if (!this.inviteRateLimiter.allow(senderKey)) {
+          res.status(429).json({ error: 'Rate limited: too many invitations' });
+          return;
+        }
+
         // Validate invitation structure
         const sharing = new SharingProtocol(config);
         const validation = sharing.validateInvitation(invitation);
         if (!validation.valid) {
           res.status(400).json({ error: `Invalid invitation: ${validation.reason}` });
+          return;
+        }
+
+        // Nonce replay protection
+        if (invitation.nonce && !this.nonceCache.check(invitation.nonce)) {
+          res.status(400).json({ error: 'Nonce replay detected' });
           return;
         }
 
@@ -444,7 +464,9 @@ export class JsonRpcServer {
       if (!config) throw new Error('Wallet not initialized');
 
       const sharing = new SharingProtocol(config);
-      const invitation = sharing.createInvitation(`claw://${endpoint}`);
+      const invitation = await sharing.createInvitation(`claw://${endpoint}`, {
+        recipientEndpoint: endpoint
+      });
 
       const res = await fetch(`${endpoint}/wallet/invite`, {
         method: 'POST',
@@ -482,14 +504,20 @@ export class JsonRpcServer {
     const config = this.walletManager.getConfig();
     const identityKey = config?.identityKey || 'unknown';
 
-    // Echo: trivial paid service proving the 402 flow
-    this.capabilityRegistry.registerEcho(
-      // Defer wallet access — it may not be ready at constructor time
-      { createSignature: async (...args: any[]) => this.walletManager.getWallet().createSignature(...args) },
-      identityKey
-    );
+    // Deferred wallet proxy — wallet may not be ready at constructor time
+    const walletProxy = {
+      createSignature: async (...args: any[]) => this.walletManager.getWallet().createSignature(...args)
+    };
 
-    // Broadcast listing: the spreading flywheel
+    // Echo: trivial paid service proving the 402 flow
+    this.capabilityRegistry.registerEcho(walletProxy, identityKey);
+
+    // Verifiable capabilities (BrowserAI #2)
+    this.capabilityRegistry.registerSignMessage(walletProxy, identityKey);
+    this.capabilityRegistry.registerHashCommit(walletProxy, identityKey);
+    this.capabilityRegistry.registerTimestampAttest(walletProxy, identityKey);
+
+    // Broadcast listing: the spreading flywheel (with anti-abuse per BrowserAI #3)
     this.capabilityRegistry.registerBroadcastListing(
       () => this.peerRegistry.getAllPeers().map(p => p.endpoint).filter(Boolean)
     );

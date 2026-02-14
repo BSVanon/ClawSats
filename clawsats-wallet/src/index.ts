@@ -1,9 +1,12 @@
 export { WalletManager } from './core/WalletManager';
 export { PeerRegistry } from './core/PeerRegistry';
 export { CapabilityRegistry } from './core/CapabilityRegistry';
+export { NonceCache } from './core/NonceCache';
+export { RateLimiter } from './core/RateLimiter';
 export { JsonRpcServer } from './server/JsonRpcServer';
 export { SharingProtocol } from './protocol';
 export { formatIdentityKey, generateNonce, canonicalJson, log, logWarn, logError } from './utils';
+export * from './protocol/constants';
 export {
   WalletConfig,
   Chain,
@@ -23,6 +26,9 @@ export {
   BroadcastListingRequest,
   BroadcastListingResponse,
   BeaconData,
+  BeaconPayload,
   InvitationAcceptance,
+  Receipt,
+  BroadcastMeta,
   ReputationScore
 } from './types';
