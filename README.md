@@ -31,9 +31,12 @@ This wallet package is the foundational building block — it gives every Claw a
 - **Verifiable Capabilities** — `sign_message`, `hash_commit`, `timestamp_attest` — cryptographically provable results
 - **Viral Spreading** — `broadcast_listing` (50 sats) — Claws earn BSV by telling other Claws about new Claws
 - **Strict Payment Gating** — `internalizeAction` must succeed or capability is NOT executed (no free rides)
+- **Payment Replay Protection** — SHA-256 dedupe cache prevents reuse of the same payment tx
+- **Amount Verification** — internalized output amount checked against capability price (no underpayment)
 - **Auto-Secured Public Bind** — binding to `0.0.0.0` auto-generates an API key; JSON-RPC admin is always protected
 - **Anti-Abuse** — nonce replay protection, per-sender rate limiting, hop limits, audience caps, dedupe keys
-- **Signed Handshake** — invitations include `protocol`, `nonce`, `expires`, `signature` — cryptographically verified
+- **Enforced Signatures** — invitations and announcements with invalid/missing signatures are REJECTED (403)
+- **SSRF Protection** — peer endpoints validated against private IPs, localhost, cloud metadata, non-http schemes
 - **Hardcoded Fee Key** — fee constants baked into `protocol/constants.ts` — SHA-256 integrity check at startup, tamper-resistant
 - **BRC-29 Fresh Addresses** — every payment derives a unique address via BRC-42 key derivation, no address reuse
 - **Peer Registry** — tracks known Claws with reputation scoring, auto-eviction, disk persistence across restarts
@@ -172,7 +175,7 @@ clawsats-wallet/
 │       └── index.ts          # All TypeScript interfaces and types
 ├── scripts/
 │   └── auto-deploy.sh        # Production systemd deployment script
-├── tests/                    # Test files (TODO)
+├── tests/                    # 54 unit tests (jest + ts-jest)
 ├── package.json
 └── tsconfig.json
 ```
@@ -541,6 +544,18 @@ The `broadcast_listing` capability is the viral engine — Claws **earn BSV by t
 - [x] /discovery uses --endpoint (never advertises 0.0.0.0)
 - [x] Real faucet integration in fundWithTestnet() (HTTP POST to faucet API)
 - [x] Fee key advertised in 402 challenge headers (peers can verify canonical key)
+
+### Phase 2.85: Security Audit Hardening ✅ (Third-Party Review)
+- [x] **Payment replay protection** — SHA-256 dedupe cache on payment tx data (FIFO, 10k cap)
+- [x] **Amount verification** — internalized output checked against cap.pricePerCall
+- [x] **Enforced signature verification** — /wallet/invite and /wallet/announce reject invalid/missing sigs (403)
+- [x] **canonicalJson for verification** — signing and verification now use identical serialization
+- [x] **SSRF protection** — isValidPeerEndpoint blocks localhost, private IPs, cloud metadata, non-http
+- [x] **Deploy script fix** — uses CLI `create` to generate proper config with rootKeyHex
+- [x] **Beacon lockingScript** — CLI uses `lockingScript` (BRC-100 canonical) instead of `script`
+- [x] **verifyPayment label fix** — searches both `clawsats-payment` and `payment` labels
+- [x] **NonceCache TTL enforcement** — validate() now evicts entries older than ttlMs
+- [x] 54 unit tests covering constants, peer registry, nonce cache, rate limiter, security fixes
 
 ### Phase 3: Production Hardening (Next)
 - [ ] Full beacon watcher scanning overlay networks + on-chain OP_RETURNs
