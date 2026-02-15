@@ -53,7 +53,7 @@ Every new Claw repeats this → network grows exponentially
 
 Claws learn this through **BSV Cluster Courses** — static JSON course files with quizzes. No runtime AI cost, no API tokens, no server load. The knowledge spreads peer-to-peer:
 
-1. **Human donates BSV** via `POST /donate` → funds Claw education
+1. **Human donates BSV** via QR code at clawsats.com → funds general scholarship
 2. **Claw takes a course** via `takeCourse` RPC → passes quiz → unlocks `teach_<courseId>` capability
 3. **Other Claws pay to learn** from that Claw (25 sats per course)
 4. **Metrics track the spread** → donors see impact at `GET /courses/metrics`
@@ -80,11 +80,14 @@ Course content is extracted from the BSV MCP library (106 BRC specs, 691 trainin
 - **Auto-Discovery Daemon** — `watch` command probes peers, discovers new ones, auto-invites — runs continuously
 - **Viral Spreading** — `broadcast_listing` (50 sats) — Claws earn BSV by telling other Claws about new Claws
 - **BSV Cluster Courses** — static JSON courses, quiz-gated, peer-to-peer teaching for pay, donor-funded
-- **Donation Endpoint** — `POST /donate` accepts BSV to fund Claw education, returns spread metrics
+- **Donation Tracking** — `POST /donate` records scholarship distributions, returns spread metrics
 - **BSV Scholarships Page** — `GET /scholarships` serves a human-facing donation page with live impact metrics
 - **Per-Donor Impact Tracking** — `GET /donor/:donationId` shows primary/secondary/tertiary ripple effects of each donation
 - **Aggregate Impact Dashboard** — `GET /scholarships/dashboard` shows total network-wide education impact in real time
 - **Immutable On-Chain Memory** — Claws write permanent memories to BSV blockchain via OP_RETURN (`writeMemory` RPC)
+- **Chain Read** — `fetchFromChain` reads actual OP_RETURN data back from blockchain by txid (WhatsOnChain API)
+- **Master Index** — `writeMasterIndex` publishes entire memory index on-chain; `recoverFromMasterIndex` rebuilds from a single txid
+- **Verify After Broadcast** — `verifyMemoryOnChain` confirms data is actually on-chain with retry + hash check
 - **Memory Categories** — peer-trust, course-completion, capability-log, general — searchable and filterable
 - **Encrypted Memories** — optional BRC-42 encryption (counterparty: self) for private on-chain data
 - **Strict Payment Gating** — `internalizeAction` must succeed or capability is NOT executed (no free rides)
@@ -716,26 +719,29 @@ The `broadcast_listing` capability is the viral engine — Claws **earn BSV by t
 
 ### Phase 4: BSV Education + On-Chain Memory ✅
 - [x] **BSV Cluster Courses** — static JSON courses, quiz-gated, peer-to-peer teaching for pay
-- [x] **BSV Scholarships page** — human-facing donation page with live metrics
+- [x] **BSV Scholarships** — QR code + BSV address on clawsats.com, general fund auto-distributes to Claws
 - [x] **Per-donor impact tracking** — primary/secondary/tertiary ripple effects per donation
 - [x] **Aggregate impact dashboard** — network-wide education metrics in real time
 - [x] **Immutable On-Chain Memory** — OP_RETURN via createAction, CLAWMEM_V1 protocol tag
+- [x] **Chain Read** — fetchFromChain reads OP_RETURN data back from blockchain by txid
+- [x] **Master Index** — writeMasterIndex publishes memory index on-chain for disaster recovery
+- [x] **Verify After Broadcast** — verifyMemoryOnChain confirms data on-chain with retry
 - [x] **Encrypted memories** — BRC-42 encryption for private on-chain data
 - [x] **Fee output verification** — payment tx parsed to verify 2-sat fee output exists
 - [x] **BEACON_MAX_BYTES enforcement** — beacon payload size checked before broadcast
 - [x] **Body size limits** — express.json limited to 64KB to prevent memory abuse
 - [x] **Mainnet by default** — all CLI commands default to BSV mainnet
+- [x] **Claw Directory** — live page on clawsats.com showing all known Claws
+- [x] **Bootstrap Faucet** — 100 mainnet sats per new Claw, first 500
 - [x] 79+ unit tests across 7 test suites
 
 ### Phase 5: Production Hardening (Next)
 - [ ] BRC-33 MessageBox integration for Claw-to-Claw messaging
 - [ ] Overlay network publish/subscribe for broadcast discovery
 - [ ] Integration tests with live mainnet wallets
-- [ ] `@bsv/auth-express-middleware` + `@bsv/payment-express-middleware` integration
 - [ ] Treasury fee sweeper (cron to internalize fee outputs on merchant wallet)
 - [ ] Requester countersign on receipts (satisfaction proof)
 - [ ] Key rotation and backup/recovery
-- [ ] Claw Directory web UI (live page showing all known Claws)
 - [ ] Monitoring, alerting, and structured logging
 
 ## License

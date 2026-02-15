@@ -238,9 +238,10 @@ export class JsonRpcServer {
 
     // ── BSV Cluster Courses: Public Endpoints ──────────────────────────
 
-    // Donation endpoint — humans send BSV to fund Claw education
+    // Donation tracking endpoint — records scholarship distributions received by this Claw.
+    // Human donations go through the faucet server's QR code flow (clawsats.com/api/scholarships).
+    // This endpoint tracks the education impact after sats arrive.
     // POST /donate { donorName, coursesTargeted?, satoshis }
-    // In production this would accept a BRC-105 payment. For now it records intent.
     this.app.post('/donate', async (req: express.Request, res: express.Response) => {
       try {
         const { donorName, coursesTargeted, satoshis } = req.body;
