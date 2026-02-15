@@ -171,11 +171,19 @@ program
       const wallet = walletManager.getWallet();
       const sharing = new SharingProtocol(config, wallet);
       const invitation = await sharing.createInvitation(options.recipient);
+      const isHttpRecipient = options.recipient.startsWith('http://') || options.recipient.startsWith('https://');
 
       console.log(`📨 Invitation created: ${invitation.invitationId}`);
 
-      // If recipient looks like a URL, send it directly via HTTP
-      if (options.recipient.startsWith('http://') || options.recipient.startsWith('https://')) {
+      if (options.output) {
+        writeFileSync(options.output, JSON.stringify(invitation, null, 2));
+        console.log(`✅ Invitation saved to: ${options.output}`);
+      }
+
+      // If recipient looks like a URL, send it directly via HTTP.
+      // This path can be combined with --output for deployment scripts that
+      // both persist and send invitations.
+      if (isHttpRecipient) {
         console.log(`📤 Sending invitation to ${options.recipient}/wallet/invite ...`);
         const res = await fetch(`${options.recipient}/wallet/invite`, {
           method: 'POST',
@@ -196,10 +204,7 @@ program
           console.log(`  Peer identity: ${response.announcement.identityKey.substring(0, 24)}...`);
         }
         console.log(`  Peers known by recipient: ${response.peersKnown}`);
-      } else if (options.output) {
-        writeFileSync(options.output, JSON.stringify(invitation, null, 2));
-        console.log(`✅ Invitation saved to: ${options.output}`);
-      } else {
+      } else if (!options.output) {
         // Print to stdout for piping
         console.log(JSON.stringify(invitation, null, 2));
       }
@@ -578,10 +583,22 @@ program
 program
   .command('config')
   .description('Show wallet configuration')
+  .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
   .option('--show-secrets', 'Show sensitive information', false)
-  .action((options) => {
+  .action(async (options) => {
     try {
-      const config = walletManager.getConfig();
+      let config = walletManager.getConfig();
+      if (!config) {
+        const configPath = join(process.cwd(), options.config);
+        if (!existsSync(configPath)) {
+          console.error(`❌ Config file not found: ${configPath}`);
+          console.log('Create a wallet first: clawsats-wallet create');
+          process.exit(1);
+        }
+        await walletManager.loadWallet(configPath);
+        config = walletManager.getConfig();
+      }
+
       if (!config) {
         console.error('❌ Wallet not initialized. Create or load a wallet first.');
         process.exit(1);

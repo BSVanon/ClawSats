@@ -39,23 +39,14 @@ export class WalletManager {
     // Create wallet using the canonical wallet-toolbox Setup API.
     // Setup.createWalletClientNoEnv is the cleanest path for autonomous
     // agents — no .env file required, just chain + rootKeyHex.
-    if (storageType === 'sqlite') {
-      // Build a synthetic SetupEnv so we can use createWalletSQLite
-      const env = WalletManager.buildEnv(chain, identityKey, rootKeyHex);
-      const sw = await Setup.createWalletSQLite({
-        env,
-        rootKeyHex,
-        filePath: storagePath,
-        databaseName: name
-      });
-      this.wallet = sw.wallet;
-    } else {
-      // In-memory wallet backed by remote StorageClient
-      this.wallet = await Setup.createWalletClientNoEnv({
-        chain,
-        rootKeyHex
-      });
-    }
+    const runtimeStorageType = await this.initWalletWithFallback({
+      chain,
+      rootKeyHex,
+      identityKey,
+      storageType,
+      storagePath,
+      databaseName: name
+    });
 
     // Auto-fund with testnet BSV if requested
     if (autoFund && chain === 'test') {
@@ -67,8 +58,8 @@ export class WalletManager {
       identityKey,
       chain,
       rootKeyHex,
-      storageType,
-      storagePath,
+      storageType: runtimeStorageType,
+      storagePath: runtimeStorageType === 'sqlite' ? storagePath : undefined,
       endpoints: {
         jsonrpc: 'http://localhost:3321',
         health: 'http://localhost:3321/health',
@@ -112,20 +103,20 @@ export class WalletManager {
     const rootKey = PrivateKey.fromHex(rootKeyHex);
     const identityKey = rootKey.toPublicKey().toString();
 
-    if (storageType === 'sqlite' && storagePath) {
-      const env = WalletManager.buildEnv(chain, identityKey, rootKeyHex!);
-      const sw = await Setup.createWalletSQLite({
-        env,
-        rootKeyHex: rootKeyHex!,
-        filePath: storagePath,
-        databaseName: `claw-${identityKey.substring(0, 8)}`
-      });
-      this.wallet = sw.wallet;
-    } else {
-      this.wallet = await Setup.createWalletClientNoEnv({
-        chain,
-        rootKeyHex: rootKeyHex!
-      });
+    const runtimeStorageType = await this.initWalletWithFallback({
+      chain,
+      rootKeyHex: rootKeyHex!,
+      identityKey,
+      storageType,
+      storagePath,
+      databaseName: `claw-${identityKey.substring(0, 8)}`
+    });
+    if (runtimeStorageType !== storageType) {
+      this.config.storageType = runtimeStorageType;
+      if (runtimeStorageType !== 'sqlite') {
+        this.config.storagePath = undefined;
+      }
+      this.saveConfig(this.config);
     }
 
     return this.config;
@@ -257,6 +248,55 @@ export class WalletManager {
       const msg = error instanceof Error ? error.message : String(error);
       console.warn('[wallet] Failed to fund with testnet:', msg);
     }
+  }
+
+  /**
+   * Initialize wallet runtime and gracefully fall back when wallet-toolbox
+   * SQLite setup is unavailable in the installed package build.
+   */
+  private async initWalletWithFallback(args: {
+    chain: Chain;
+    rootKeyHex: string;
+    identityKey: string;
+    storageType: 'sqlite' | 'memory';
+    storagePath?: string;
+    databaseName: string;
+  }): Promise<'sqlite' | 'memory'> {
+    const {
+      chain,
+      rootKeyHex,
+      identityKey,
+      storageType,
+      storagePath,
+      databaseName
+    } = args;
+
+    if (storageType === 'sqlite' && storagePath) {
+      const env = WalletManager.buildEnv(chain, identityKey, rootKeyHex);
+      try {
+        const sw = await Setup.createWalletSQLite({
+          env,
+          rootKeyHex,
+          filePath: storagePath,
+          databaseName
+        });
+        this.wallet = sw.wallet;
+        return 'sqlite';
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        if (msg.includes('Function not implemented')) {
+          console.warn('[wallet] SQLite init unavailable in installed @bsv/wallet-toolbox build. Falling back to memory storage.');
+        } else {
+          console.warn(`[wallet] SQLite init failed (${msg}). Falling back to memory storage.`);
+        }
+      }
+    }
+
+    this.wallet = await Setup.createWalletClientNoEnv({
+      chain,
+      rootKeyHex
+    });
+    return 'memory';
   }
 
   private saveConfig(config: WalletConfig): void {

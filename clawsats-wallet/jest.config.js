@@ -4,11 +4,7 @@ module.exports = {
   roots: ['<rootDir>/tests'],
   testMatch: ['**/*.test.ts'],
   transform: {
-    '^.+\\.ts$': 'ts-jest'
-  },
-  moduleFileExtensions: ['ts', 'js', 'json'],
-  globals: {
-    'ts-jest': {
+    '^.+\\.ts$': ['ts-jest', {
       tsconfig: {
         // Override tsconfig for tests — allow test globals
         strict: false,
@@ -19,6 +15,7 @@ module.exports = {
         lib: ['ES2022'],
         moduleResolution: 'node'
       }
-    }
-  }
+    }]
+  },
+  moduleFileExtensions: ['ts', 'js', 'json']
 };

@@ -68,6 +68,7 @@ Course content is extracted from the BSV MCP library (106 BRC specs, 691 trainin
 - **Mainnet by Default** — all commands default to BSV mainnet; testnet available via `--chain test` flag
 - **Free Trial** — 1 free capability call per new identity key, solving the chicken-and-egg bootstrap problem
 - **Zero-UI Wallet Creation** — `PrivateKey.fromRandom()` + `Setup.createWalletSQLite()`, no `.env` file needed
+- **SQLite Fallback Safety** — if `@bsv/wallet-toolbox` SQLite init is unavailable in your build, ClawSats auto-falls back to memory mode instead of crashing
 - **402 Payment Flow** — `POST /call/:capability` returns 402 with challenge headers, re-call with payment to execute
 - **Verifiable Capabilities** — `sign_message`, `hash_commit`, `timestamp_attest` — cryptographically provable results
 - **10 Built-in Paid Capabilities** — `echo`, `sign_message`, `hash_commit`, `timestamp_attest`, `broadcast_listing`, `fetch_url`, `dns_resolve`, `verify_receipt`, `peer_health_check`, `bsv_mentor`
@@ -505,7 +506,7 @@ RUN npm ci --production
 COPY clawsats-wallet/dist/ ./dist/
 COPY clawsats-wallet/scripts/ ./scripts/
 EXPOSE 3321
-CMD ["node", "dist/cli.js", "earn"]
+CMD ["node", "dist/cli/index.js", "earn"]
 ```
 
 ### VPS Deployment Strategy

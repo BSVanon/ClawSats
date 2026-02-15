@@ -15,13 +15,13 @@ NC='\033[0m' # No Color
 # Default values
 DEFAULT_CLAW_ID="claw-$(date +%s)"
 DEFAULT_INVITATION_TOKEN=""
-DEFAULT_CONFIG_URL="https://clawsats.org/config/default.json"
+DEFAULT_CONFIG_URL=""
 DEFAULT_INSTALL_DIR="/opt/clawsats"
 DEFAULT_DATA_DIR="/var/lib/clawsats"
 DEFAULT_USER="clawsats"
 DEFAULT_GROUP="clawsats"
 DEFAULT_PORT="3321"
-DEFAULT_CHAIN="test"
+DEFAULT_CHAIN="main"
 
 # Parse arguments
 CLAW_ID="${1:-$DEFAULT_CLAW_ID}"
@@ -56,7 +56,7 @@ check_prerequisites() {
     
     # Check required commands
     local missing_commands=()
-    for cmd in curl tar node npm systemctl; do
+    for cmd in curl git node npm systemctl; do
         if ! command -v $cmd &> /dev/null; then
             missing_commands+=("$cmd")
         fi
@@ -101,43 +101,39 @@ create_system_user() {
 
 # Download and install wallet
 install_wallet() {
-    log_info "Downloading ClawSats wallet..."
-    
-    # Create temporary directory
-    local temp_dir=$(mktemp -d)
-    trap "rm -rf $temp_dir" EXIT
-    
-    # Download latest release
-    local latest_url="https://clawsats.org/wallet/latest.tar.gz"
-    log_info "Downloading from: $latest_url"
-    
-    if ! curl -sSL -o "$temp_dir/wallet.tar.gz" "$latest_url"; then
-        log_error "Failed to download wallet package"
+    log_info "Installing ClawSats wallet from GitHub..."
+
+    local repo_url="https://github.com/BSVanon/ClawSats.git"
+
+    if [[ -d "$DEFAULT_INSTALL_DIR/.git" ]]; then
+        log_info "Existing repository found. Pulling latest main..."
+        if ! git -C "$DEFAULT_INSTALL_DIR" pull --ff-only origin main; then
+            log_error "Failed to update existing repository at $DEFAULT_INSTALL_DIR"
+            return 1
+        fi
+    else
+        if [[ -d "$DEFAULT_INSTALL_DIR" ]]; then
+            log_info "Using existing installation directory: $DEFAULT_INSTALL_DIR"
+        else
+            mkdir -p "$DEFAULT_INSTALL_DIR"
+            log_success "Created installation directory: $DEFAULT_INSTALL_DIR"
+        fi
+
+        if ! git clone --depth 1 "$repo_url" "$DEFAULT_INSTALL_DIR"; then
+            log_error "Failed to clone repository: $repo_url"
+            return 1
+        fi
+    fi
+
+    if [[ ! -d "$DEFAULT_INSTALL_DIR/clawsats-wallet" ]]; then
+        log_error "clawsats-wallet directory not found after clone/update"
         return 1
     fi
-    
-    # Extract package
-    log_info "Extracting wallet package..."
-    if ! tar -xzf "$temp_dir/wallet.tar.gz" -C "$temp_dir"; then
-        log_error "Failed to extract wallet package"
-        return 1
-    fi
-    
-    # Create installation directory
-    if [[ ! -d "$DEFAULT_INSTALL_DIR" ]]; then
-        mkdir -p "$DEFAULT_INSTALL_DIR"
-        log_success "Created installation directory: $DEFAULT_INSTALL_DIR"
-    fi
-    
-    # Copy files
-    log_info "Installing wallet files..."
-    cp -r "$temp_dir"/* "$DEFAULT_INSTALL_DIR/"
-    
-    # Set permissions
+
     chown -R "$DEFAULT_USER:$DEFAULT_GROUP" "$DEFAULT_INSTALL_DIR"
     chmod -R 750 "$DEFAULT_INSTALL_DIR"
-    
-    log_success "Wallet installed to: $DEFAULT_INSTALL_DIR"
+
+    log_success "Wallet source installed at: $DEFAULT_INSTALL_DIR/clawsats-wallet"
     return 0
 }
 
@@ -145,17 +141,38 @@ install_wallet() {
 install_dependencies() {
     log_info "Installing Node.js dependencies..."
     
-    cd "$DEFAULT_INSTALL_DIR"
-    
-    if ! npm ci --production; then
-        log_warning "Failed to install dependencies with npm ci, trying npm install..."
-        if ! npm install --production; then
+    cd "$DEFAULT_INSTALL_DIR/clawsats-wallet"
+
+    if [[ -f package-lock.json ]]; then
+        if ! npm ci --omit=dev; then
+            log_warning "Failed npm ci --omit=dev, trying npm install --omit=dev..."
+            if ! npm install --omit=dev; then
+                log_error "Failed to install production dependencies"
+                return 1
+            fi
+        fi
+    else
+        if ! npm install --omit=dev; then
             log_error "Failed to install dependencies"
             return 1
         fi
     fi
-    
-    log_success "Dependencies installed"
+
+    # If dist was not committed, build it from source.
+    if [[ ! -f "$DEFAULT_INSTALL_DIR/clawsats-wallet/dist/cli/index.js" ]]; then
+        log_warning "dist/cli/index.js missing. Installing dev deps to build..."
+        if ! npm install; then
+            log_error "Failed to install dev dependencies required for build"
+            return 1
+        fi
+        if ! npm run build; then
+            log_error "Build failed"
+            return 1
+        fi
+        npm prune --omit=dev || true
+    fi
+
+    log_success "Dependencies installed and CLI verified"
     return 0
 }
 
@@ -210,7 +227,7 @@ create_systemd_service() {
     cat > "$service_file" << EOF
 [Unit]
 Description=ClawSats Wallet Service
-Documentation=https://clawsats.org/wallet
+Documentation=https://github.com/BSVanon/ClawSats
 After=network.target
 
 [Service]
@@ -293,11 +310,11 @@ share_capability() {
         
         # Example: Share via BRC-33 MessageBox
         log_info "To share via BRC-33 MessageBox:"
-        echo "  clawsats-wallet share --channel messagebox --invitation $invitation_file"
+        echo "  /usr/bin/node $DEFAULT_INSTALL_DIR/clawsats-wallet/dist/cli/index.js share -r claw://peer-id --output $invitation_file"
         
         # Example: Share via overlay network
         log_info "To share via overlay network:"
-        echo "  clawsats-wallet share --channel overlay --topic clawsats-wallets --invitation $invitation_file"
+        echo "  /usr/bin/node $DEFAULT_INSTALL_DIR/clawsats-wallet/dist/cli/index.js announce --endpoint http://YOUR_VPS_IP:$DEFAULT_PORT"
     fi
     
     return 0
@@ -330,9 +347,9 @@ main() {
     log_info "5. View logs: journalctl -u clawsats-wallet -f"
     log_info ""
     log_info "To invite other Claws:"
-    log_info "  $DEFAULT_INSTALL_DIR/bin/wallet share --help"
+    log_info "  /usr/bin/node $DEFAULT_INSTALL_DIR/clawsats-wallet/dist/cli/index.js share --help"
     log_info ""
-    log_info "For support: https://docs.clawsats.org/wallet"
+    log_info "For support: https://github.com/BSVanon/ClawSats/issues"
 }
 
 # Run main function

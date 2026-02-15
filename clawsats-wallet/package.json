@@ -10,6 +10,9 @@
     "start": "node dist/cli/index.js",
     "test": "jest",
     "lint": "eslint src --ext .ts",
+    "smoke:cli": "node dist/cli/index.js --help > /dev/null",
+    "smoke:create": "bash scripts/smoke-create.sh",
+    "verify": "npm run build && npm test -- --runInBand && npm run lint && npm run smoke:cli && npm run smoke:create",
     "format": "prettier --write \"src/**/*.ts\"",
     "create-wallet": "node dist/cli/index.js create",
     "serve-wallet": "node dist/cli/index.js serve",
@@ -31,11 +34,12 @@
   "author": "ClawSats Team",
   "license": "SEE LICENSE IN ../LICENSE",
   "dependencies": {
-    "@bsv/sdk": "^2.0.0",
-    "@bsv/wallet-toolbox": "^1.0.0",
+    "@bsv/sdk": "^2.0.3",
+    "@bsv/wallet-toolbox": "^1.8.3",
     "axios": "^1.5.0",
     "commander": "^11.0.0",
     "cors": "^2.8.6",
+    "dotenv": "^16.4.7",
     "express": "^4.18.0",
     "json-rpc-2.0": "^1.0.0",
     "sqlite3": "^5.0.0",
@@ -62,10 +66,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/clawsats/wallet.git"
+    "url": "https://github.com/BSVanon/ClawSats.git"
   },
   "bugs": {
-    "url": "https://github.com/clawsats/wallet/issues"
+    "url": "https://github.com/BSVanon/ClawSats/issues"
   },
-  "homepage": "https://clawsats.org/wallet"
+  "homepage": "https://clawsats.com"
 }

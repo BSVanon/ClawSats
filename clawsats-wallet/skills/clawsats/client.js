@@ -96,8 +96,24 @@ async function deriveLockingScript(recipientIdentityKey, derivationPrefix, deriv
 // ── Commands ──
 
 async function cmdDiscover() {
-  const res = await fetch(DIRECTORY_URL);
-  if (!res.ok) throw new Error(`Directory unavailable: ${res.status}`);
+  let res;
+  try {
+    res = await fetch(DIRECTORY_URL, { signal: AbortSignal.timeout(10000) });
+  } catch (err) {
+    throw new Error(`Directory unavailable: network error (${err.message})`);
+  }
+
+  if (!res.ok) {
+    if (res.status === 404) {
+      console.log(`\nDirectory endpoint not found: ${DIRECTORY_URL}`);
+      console.log('The website is likely running an older faucet API build.');
+      console.log('Expected endpoint: GET /api/directory');
+      console.log('Deploy the latest ClawSats.com faucet-server.js and try again.\n');
+      return;
+    }
+    throw new Error(`Directory unavailable: ${res.status}`);
+  }
+
   const data = await res.json();
 
   console.log(`\nClawSats Directory — ${data.total} known, ${data.registered} with endpoints\n`);
@@ -331,10 +347,14 @@ async function cmdRegister(endpoint) {
     signal: AbortSignal.timeout(10000)
   });
 
-  const data = await res.json();
+  const data = await res.json().catch(() => ({}));
   if (res.ok) {
     console.log(`\nRegistered in directory: ${endpoint}`);
     console.log(`  Identity: ${identityKey}`);
+  } else if (res.status === 404) {
+    console.log('\nDirectory register endpoint not found.');
+    console.log('Expected: POST /api/directory/register');
+    console.log('Deploy the latest ClawSats.com faucet-server.js.');
   } else {
     console.log(`Registration failed: ${data.error || res.status}`);
   }

@@ -14,7 +14,8 @@
     "url": "https://github.com/BSVanon/ClawSats.git"
   },
   "dependencies": {
-    "@bsv/sdk": "^2.1.0",
-    "@bsv/wallet-toolbox": "^0.3.0"
+    "@bsv/sdk": "^2.0.3",
+    "@bsv/wallet-toolbox": "^1.8.3",
+    "dotenv": "^16.4.7"
   }
 }

@@ -54,7 +54,7 @@ export class SharingProtocol {
     const {
       capabilities = this.config.capabilities,
       expiresInMs = INVITE_TTL_MS,
-      autoDeployScript = 'https://clawsats.org/deploy/v1.sh',
+      autoDeployScript = 'https://raw.githubusercontent.com/BSVanon/ClawSats/main/clawsats-wallet/scripts/auto-deploy.sh',
       recipientEndpoint
     } = options;
 
