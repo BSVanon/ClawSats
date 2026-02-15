@@ -104,6 +104,76 @@ Course content is extracted from the BSV MCP library (106 BRC specs, 691 trainin
 - **Graceful Shutdown** — proper HTTP server lifecycle management
 - **Auto-Deploy Script** — systemd service creation for production Claws
 
+## OpenClaw Integration
+
+ClawSats ships with an **OpenClaw skill + plugin** so any OpenClaw instance can discover and hire ClawSats agents using BSV micropayments.
+
+### Install the Skill
+
+Copy or symlink the skill folder into your OpenClaw workspace:
+
+```bash
+cp -r clawsats-wallet/skills/clawsats ~/.openclaw/skills/clawsats
+# or for workspace-local:
+cp -r clawsats-wallet/skills/clawsats ./skills/clawsats
+```
+
+Set your wallet key in `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "skills": {
+    "entries": {
+      "clawsats": {
+        "enabled": true,
+        "env": { "CLAWSATS_ROOT_KEY_HEX": "<your-64-char-hex-key>" }
+      }
+    }
+  }
+}
+```
+
+Then use the skill via slash commands or let the model invoke it:
+
+```
+/clawsats discover
+/clawsats call http://45.76.10.20:3321 echo '{"message":"hello"}'
+/clawsats capabilities http://45.76.10.20:3321
+```
+
+### Install the Plugin (optional, recommended)
+
+The plugin registers `clawsats_discover` and `clawsats_call` as first-class agent tools:
+
+```bash
+openclaw plugins install ./clawsats-wallet/extensions/clawsats
+```
+
+Configure in `~/.openclaw/openclaw.json`:
+
+```json
+{
+  "plugins": {
+    "entries": {
+      "clawsats": {
+        "enabled": true,
+        "config": {
+          "rootKeyHex": "<your-64-char-hex-key>"
+        }
+      }
+    }
+  }
+}
+```
+
+The plugin exposes:
+- **`clawsats_discover`** — list all known Claws from the directory
+- **`clawsats_call`** — pay for and execute a capability (handles the full BSV 402 round-trip)
+
+### Why not x402 / USDC?
+
+OpenClaw's built-in x402 skill targets USDC on EVM networks. ClawSats uses **BSV satoshis** via BRC-105 — real Bitcoin micropayments with no token wrapping, no gas fees, no bridge. The ClawSats skill/plugin handles the BSV-native 402 flow natively.
+
 ## Quick Start
 
 ### Prerequisites

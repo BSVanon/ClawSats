@@ -1,0 +1,389 @@
+#!/usr/bin/env node
+/**
+ * ClawSats OpenClaw Client — BSV 402 pay-and-call helper
+ *
+ * Standalone Node.js script invoked by the OpenClaw skill.
+ * Handles discovery, capability listing, and the full BRC-105
+ * 402 challenge → pay → retry loop using @bsv/sdk + @bsv/wallet-toolbox.
+ *
+ * Usage:
+ *   node client.js discover
+ *   node client.js capabilities <endpoint>
+ *   node client.js call <endpoint> <capability> [json-params]
+ *   node client.js balance
+ *   node client.js register <your-endpoint>
+ *
+ * Env:
+ *   CLAWSATS_ROOT_KEY_HEX   — 64-char hex private key (REQUIRED for paid calls)
+ *   CLAWSATS_DIRECTORY_URL  — directory API (default: https://clawsats.com/api/directory)
+ */
+
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+const DIRECTORY_URL = process.env.CLAWSATS_DIRECTORY_URL || 'https://clawsats.com/api/directory';
+const ROOT_KEY_HEX = process.env.CLAWSATS_ROOT_KEY_HEX || '';
+
+// Protocol constants (must match clawsats-wallet/src/protocol/constants.ts)
+const FEE_SATS = 2;
+const FEE_IDENTITY_KEY = '0307102dc99293edba7f75bf881712652879c151b454ebf5d8e7a0ba07c4d17364';
+const FEE_DERIVATION_SUFFIX = 'fee';
+
+// ── Wallet (lazy-initialized) ──
+
+let wallet = null;
+let identityKey = null;
+
+async function ensureWallet() {
+  if (wallet) return;
+  if (!ROOT_KEY_HEX || ROOT_KEY_HEX.length !== 64) {
+    throw new Error(
+      'CLAWSATS_ROOT_KEY_HEX not set or invalid (need 64 hex chars).\n' +
+      'Generate one: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
+    );
+  }
+
+  const { Setup } = require('@bsv/wallet-toolbox');
+  const { PrivateKey } = require('@bsv/sdk');
+
+  const rootKey = PrivateKey.fromHex(ROOT_KEY_HEX);
+  identityKey = rootKey.toPublicKey().toString();
+
+  const dataDir = path.join(__dirname, '.wallet-data');
+  if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
+  const env = {
+    chain: 'main',
+    identityKey,
+    identityKey2: identityKey,
+    filePath: undefined,
+    taalApiKey: '',
+    devKeys: { [identityKey]: ROOT_KEY_HEX },
+    mySQLConnection: '{}'
+  };
+
+  const sw = await Setup.createWalletSQLite({
+    env,
+    rootKeyHex: ROOT_KEY_HEX,
+    filePath: path.join(dataDir, 'clawsats-client.sqlite'),
+    databaseName: 'clawsats-openclaw-client'
+  });
+
+  wallet = sw.wallet;
+}
+
+// ── P2PKH helper ──
+
+function p2pkhFromPubkey(pubkeyHex) {
+  const pubkeyBuf = Buffer.from(pubkeyHex, 'hex');
+  const sha = crypto.createHash('sha256').update(pubkeyBuf).digest();
+  const hash160 = crypto.createHash('ripemd160').update(sha).digest();
+  return '76a914' + hash160.toString('hex') + '88ac';
+}
+
+// ── BRC-29 key derivation for payment outputs ──
+
+async function deriveLockingScript(recipientIdentityKey, derivationPrefix, derivationSuffix) {
+  const result = await wallet.getPublicKey({
+    protocolID: [2, '3241645161d8'],
+    keyID: `${derivationPrefix} ${derivationSuffix}`,
+    counterparty: recipientIdentityKey
+  });
+  return p2pkhFromPubkey(result.publicKey);
+}
+
+// ── Commands ──
+
+async function cmdDiscover() {
+  const res = await fetch(DIRECTORY_URL);
+  if (!res.ok) throw new Error(`Directory unavailable: ${res.status}`);
+  const data = await res.json();
+
+  console.log(`\nClawSats Directory — ${data.total} known, ${data.registered} with endpoints\n`);
+
+  if (!data.claws || data.claws.length === 0) {
+    console.log('No Claws registered yet.');
+    return;
+  }
+
+  for (const c of data.claws) {
+    const key = c.identityKey ? c.identityKey.substring(0, 16) + '...' : '—';
+    const ep = c.endpoint || 'no endpoint';
+    const caps = c.capabilities ? c.capabilities.join(', ') : '';
+    console.log(`  ${c.status.padEnd(12)} ${key}  ${ep}${caps ? '  [' + caps + ']' : ''}`);
+  }
+  console.log('');
+}
+
+async function cmdCapabilities(endpoint) {
+  if (!endpoint) throw new Error('Usage: client.js capabilities <endpoint>');
+
+  // Try the manifest endpoint first, fall back to health
+  let caps = [];
+  try {
+    const res = await fetch(`${endpoint}/manifest`, { signal: AbortSignal.timeout(10000) });
+    if (res.ok) {
+      const manifest = await res.json();
+      caps = manifest.capabilities || [];
+      console.log(`\nClaw at ${endpoint}`);
+      console.log(`  Identity: ${manifest.identityKey || '?'}`);
+      console.log(`  Capabilities (${caps.length}):\n`);
+      for (const cap of caps) {
+        const name = typeof cap === 'string' ? cap : cap.name || cap;
+        const price = typeof cap === 'object' ? cap.pricePerCall || '?' : '?';
+        console.log(`    ${String(name).padEnd(24)} ${price} sat`);
+      }
+      console.log('');
+      return;
+    }
+  } catch {}
+
+  // Fall back to health endpoint
+  try {
+    const res = await fetch(`${endpoint}/health`, { signal: AbortSignal.timeout(10000) });
+    if (res.ok) {
+      const health = await res.json();
+      console.log(`\nClaw at ${endpoint} — healthy`);
+      console.log(JSON.stringify(health, null, 2));
+      return;
+    }
+  } catch {}
+
+  console.log(`Could not reach ${endpoint}`);
+}
+
+async function cmdCall(endpoint, capability, paramsJson) {
+  if (!endpoint || !capability) {
+    throw new Error('Usage: client.js call <endpoint> <capability> [json-params]');
+  }
+
+  await ensureWallet();
+
+  const params = paramsJson ? JSON.parse(paramsJson) : {};
+  const url = `${endpoint}/call/${capability}`;
+
+  console.log(`\nCalling ${capability} on ${endpoint}...`);
+
+  // Step 1: Request without payment → expect 402 (or 200 for free trial)
+  const challengeRes = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-bsv-identity-key': identityKey
+    },
+    body: JSON.stringify(params),
+    signal: AbortSignal.timeout(15000)
+  });
+
+  if (challengeRes.ok) {
+    // Free trial or free capability
+    const result = await challengeRes.json();
+    console.log('\nResult (free trial):');
+    console.log(JSON.stringify(result, null, 2));
+    return result;
+  }
+
+  if (challengeRes.status !== 402) {
+    const errBody = await challengeRes.text();
+    throw new Error(`Unexpected ${challengeRes.status}: ${errBody}`);
+  }
+
+  // Step 2: Parse 402 challenge headers
+  const satoshisRequired = parseInt(
+    challengeRes.headers.get('x-bsv-payment-satoshis-required') || '0', 10
+  );
+  const derivationPrefix = challengeRes.headers.get('x-bsv-payment-derivation-prefix') || '';
+  const providerIdentityKey = challengeRes.headers.get('x-bsv-identity-key') || '';
+  const feeIdentityKey = challengeRes.headers.get('x-clawsats-fee-identity-key') || FEE_IDENTITY_KEY;
+  const feeSats = parseInt(
+    challengeRes.headers.get('x-clawsats-fee-satoshis-required') || String(FEE_SATS), 10
+  );
+
+  if (!derivationPrefix || satoshisRequired <= 0) {
+    throw new Error('Invalid 402 challenge: missing derivation prefix or satoshis');
+  }
+
+  // Verify fee key matches canonical protocol key
+  if (feeIdentityKey !== FEE_IDENTITY_KEY) {
+    throw new Error(
+      'SECURITY: Provider fee key does not match canonical FEE_IDENTITY_KEY. ' +
+      'This provider may be running modified code. Payment refused.'
+    );
+  }
+
+  console.log(`  402 received: ${satoshisRequired} sats + ${feeSats} sat fee`);
+
+  // Step 3: Build payment transaction
+  const derivationSuffix = 'clawsats';
+
+  const providerScript = await deriveLockingScript(
+    providerIdentityKey || identityKey, derivationPrefix, derivationSuffix
+  );
+  const feeScript = await deriveLockingScript(
+    FEE_IDENTITY_KEY, derivationPrefix, FEE_DERIVATION_SUFFIX
+  );
+
+  const actionResult = await wallet.createAction({
+    description: `ClawSats: ${capability} (${satoshisRequired} + ${feeSats} sat fee)`,
+    outputs: [
+      {
+        satoshis: satoshisRequired,
+        lockingScript: providerScript,
+        outputDescription: 'ClawSats provider payment'
+      },
+      {
+        satoshis: feeSats,
+        lockingScript: feeScript,
+        outputDescription: 'ClawSats protocol fee'
+      }
+    ],
+    labels: ['clawsats-payment'],
+    options: { signAndProcess: true }
+  });
+
+  // Extract raw tx as base64
+  let txBase64;
+  if (actionResult.rawTx) {
+    txBase64 = typeof actionResult.rawTx === 'string'
+      ? actionResult.rawTx
+      : Buffer.from(actionResult.rawTx).toString('base64');
+  } else if (actionResult.tx) {
+    txBase64 = typeof actionResult.tx === 'string'
+      ? actionResult.tx
+      : Buffer.from(actionResult.tx).toString('base64');
+  } else {
+    throw new Error('createAction did not return rawTx or tx');
+  }
+
+  console.log(`  Payment built: ${satoshisRequired + feeSats} sats total`);
+
+  // Step 4: Retry with payment proof
+  const paymentHeader = JSON.stringify({
+    derivationPrefix,
+    derivationSuffix,
+    transaction: txBase64
+  });
+
+  const resultRes = await fetch(url, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-bsv-identity-key': identityKey,
+      'x-bsv-payment': paymentHeader
+    },
+    body: JSON.stringify(params),
+    signal: AbortSignal.timeout(30000)
+  });
+
+  if (!resultRes.ok) {
+    const errBody = await resultRes.text();
+    throw new Error(`Payment sent but capability failed (${resultRes.status}): ${errBody}`);
+  }
+
+  const result = await resultRes.json();
+  console.log(`  Paid ${satoshisRequired + feeSats} sats`);
+  console.log('\nResult:');
+  console.log(JSON.stringify(result, null, 2));
+  return result;
+}
+
+async function cmdBalance() {
+  await ensureWallet();
+  console.log(`\nIdentity key: ${identityKey}`);
+
+  try {
+    const actions = await wallet.listActions({ labels: ['clawsats-payment'], limit: 5 });
+    const count = actions.totalActions || 0;
+    console.log(`Recent ClawSats payments: ${count}`);
+  } catch {}
+
+  try {
+    const outputs = await wallet.listOutputs({ basket: 'default', include: 'locking scripts' });
+    let total = 0;
+    if (outputs && outputs.outputs) {
+      for (const o of outputs.outputs) {
+        if (o.spendable) total += o.satoshis || 0;
+      }
+    }
+    console.log(`Spendable balance: ${total} sats`);
+  } catch (e) {
+    console.log('Could not query balance (wallet may need funding)');
+  }
+  console.log('');
+}
+
+async function cmdRegister(endpoint) {
+  if (!endpoint) throw new Error('Usage: client.js register <your-endpoint>');
+
+  await ensureWallet();
+
+  const res = await fetch(`${DIRECTORY_URL}/register`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      identityKey,
+      endpoint,
+      capabilities: []
+    }),
+    signal: AbortSignal.timeout(10000)
+  });
+
+  const data = await res.json();
+  if (res.ok) {
+    console.log(`\nRegistered in directory: ${endpoint}`);
+    console.log(`  Identity: ${identityKey}`);
+  } else {
+    console.log(`Registration failed: ${data.error || res.status}`);
+  }
+}
+
+// ── Main ──
+
+async function main() {
+  const [,, command, ...args] = process.argv;
+
+  switch (command) {
+    case 'discover':
+      await cmdDiscover();
+      break;
+    case 'capabilities':
+    case 'caps':
+      await cmdCapabilities(args[0]);
+      break;
+    case 'call':
+      await cmdCall(args[0], args[1], args[2]);
+      break;
+    case 'balance':
+      await cmdBalance();
+      break;
+    case 'register':
+      await cmdRegister(args[0]);
+      break;
+    default:
+      console.log(`
+ClawSats OpenClaw Client
+
+Commands:
+  discover                              List all known Claws
+  capabilities <endpoint>               Show a Claw's capabilities and prices
+  call <endpoint> <capability> [json]   Pay for and execute a capability
+  balance                               Show wallet identity and balance
+  register <your-endpoint>              Register your Claw in the directory
+
+Env:
+  CLAWSATS_ROOT_KEY_HEX    64-char hex private key (required for paid calls)
+  CLAWSATS_DIRECTORY_URL   Directory API (default: https://clawsats.com/api/directory)
+
+Examples:
+  node client.js discover
+  node client.js call http://45.76.10.20:3321 echo '{"message":"hello"}'
+  node client.js call http://45.76.10.20:3321 fetch_url '{"url":"https://example.com"}'
+`);
+  }
+}
+
+main().catch(err => {
+  console.error(`Error: ${err.message}`);
+  process.exit(1);
+});

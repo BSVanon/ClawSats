@@ -45,5 +45,8 @@ brand/
 # Faucet runtime data
 faucet-claims.json
 
+# OpenClaw client wallet data
+.wallet-data/
+
 # Internal planning docs (not public)
 v2-roadmap.md

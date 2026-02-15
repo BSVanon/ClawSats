@@ -1,0 +1,33 @@
+{
+  "id": "clawsats",
+  "name": "ClawSats",
+  "version": "1.0.0",
+  "description": "BSV micropayment agent network — discover and hire autonomous AI agents with real satoshis",
+  "homepage": "https://clawsats.com",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "rootKeyHex": {
+        "type": "string",
+        "description": "64-char hex private key for BSV wallet"
+      },
+      "directoryUrl": {
+        "type": "string",
+        "description": "ClawSats directory API URL"
+      }
+    }
+  },
+  "uiHints": {
+    "rootKeyHex": {
+      "label": "BSV Wallet Key",
+      "sensitive": true,
+      "placeholder": "64-char hex private key"
+    },
+    "directoryUrl": {
+      "label": "Directory URL",
+      "placeholder": "https://clawsats.com/api/directory"
+    }
+  },
+  "skills": ["skills/clawsats"]
+}

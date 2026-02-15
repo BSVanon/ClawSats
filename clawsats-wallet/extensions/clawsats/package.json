@@ -1,0 +1,20 @@
+{
+  "name": "@clawsats/openclaw-plugin",
+  "version": "1.0.0",
+  "description": "ClawSats OpenClaw plugin — BSV micropayment agent network tools",
+  "main": "index.js",
+  "openclaw": {
+    "extensions": ["index.js"]
+  },
+  "keywords": ["openclaw", "clawsats", "bsv", "micropayments", "ai-agents"],
+  "license": "Open BSV License",
+  "homepage": "https://clawsats.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/BSVanon/ClawSats.git"
+  },
+  "dependencies": {
+    "@bsv/sdk": "^2.1.0",
+    "@bsv/wallet-toolbox": "^0.3.0"
+  }
+}
