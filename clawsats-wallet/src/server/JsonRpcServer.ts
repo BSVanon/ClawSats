@@ -1171,6 +1171,59 @@ export class JsonRpcServer {
     this.rpcServer.addMethod('memoryStats', async () => {
       return this.onChainMemory.getStats();
     });
+
+    // Fetch actual memory data from the blockchain (not just the local index)
+    this.rpcServer.addMethod('readMemoryFromChain', async (params: any) => {
+      const { key } = params;
+      if (!key) throw new Error('Missing key');
+      const result = await this.onChainMemory.readMemoryFromChain(key);
+      if (!result) return { found: false, key };
+      return { found: true, ...result };
+    });
+
+    // Fetch raw OP_RETURN data from any txid on the blockchain
+    this.rpcServer.addMethod('fetchFromChain', async (params: any) => {
+      const { txid } = params;
+      if (!txid) throw new Error('Missing txid');
+      const result = await this.onChainMemory.fetchFromChain(txid);
+      if (!result) return { found: false, txid };
+      return { found: true, txid, ...result };
+    });
+
+    // Write a master index on-chain (maps all memory keys → txids)
+    this.rpcServer.addMethod('writeMasterIndex', async () => {
+      const wallet = this.walletManager.getWallet();
+      const txid = await this.onChainMemory.writeMasterIndex(wallet);
+      return {
+        txid,
+        message: `Master index written on-chain. Store this txid to recover all memories: ${txid}`
+      };
+    });
+
+    // Recover memories from an on-chain master index
+    this.rpcServer.addMethod('recoverFromMasterIndex', async (params: any) => {
+      const { masterIndexTxid } = params;
+      if (!masterIndexTxid) throw new Error('Missing masterIndexTxid');
+      const recovered = await this.onChainMemory.recoverFromMasterIndex(masterIndexTxid);
+      return {
+        recovered,
+        message: `Recovered ${recovered} memories from master index ${masterIndexTxid}`
+      };
+    });
+
+    // Verify a memory exists on-chain (fetch + hash check)
+    this.rpcServer.addMethod('verifyMemoryOnChain', async (params: any) => {
+      const { key, retries } = params;
+      if (!key) throw new Error('Missing key');
+      const verified = await this.onChainMemory.verifyOnChain(key, retries || 3);
+      return { key, verified };
+    });
+
+    // Get the current master index txid (for beacons/identity)
+    this.rpcServer.addMethod('getMasterIndexTxid', async () => {
+      const txid = this.onChainMemory.getMasterIndexTxid();
+      return { txid, hasMasterIndex: !!txid };
+    });
   }
 
   private registerBuiltinCapabilities(): void {
