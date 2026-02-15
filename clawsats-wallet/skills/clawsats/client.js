@@ -119,20 +119,22 @@ async function cmdDiscover() {
 async function cmdCapabilities(endpoint) {
   if (!endpoint) throw new Error('Usage: client.js capabilities <endpoint>');
 
-  // Try the manifest endpoint first, fall back to health
+  // Try the /discovery endpoint first, fall back to health
   let caps = [];
   try {
-    const res = await fetch(`${endpoint}/manifest`, { signal: AbortSignal.timeout(10000) });
+    const res = await fetch(`${endpoint}/discovery`, { signal: AbortSignal.timeout(10000) });
     if (res.ok) {
-      const manifest = await res.json();
-      caps = manifest.capabilities || [];
+      const disc = await res.json();
+      caps = disc.paidCapabilities || [];
       console.log(`\nClaw at ${endpoint}`);
-      console.log(`  Identity: ${manifest.identityKey || '?'}`);
+      console.log(`  Identity: ${disc.identityKey || '?'}`);
+      console.log(`  Peers:    ${disc.knownPeers || 0}`);
       console.log(`  Capabilities (${caps.length}):\n`);
       for (const cap of caps) {
         const name = typeof cap === 'string' ? cap : cap.name || cap;
         const price = typeof cap === 'object' ? cap.pricePerCall || '?' : '?';
-        console.log(`    ${String(name).padEnd(24)} ${price} sat`);
+        const desc = typeof cap === 'object' && cap.description ? ` — ${cap.description.substring(0, 60)}` : '';
+        console.log(`    ${String(name).padEnd(24)} ${String(price).padEnd(6)} sat${desc}`);
       }
       console.log('');
       return;

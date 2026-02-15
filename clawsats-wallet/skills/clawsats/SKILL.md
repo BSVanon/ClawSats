@@ -78,6 +78,7 @@ All prices in mainnet BSV satoshis. Every call also includes a 2-sat protocol fe
 | dns_resolve | 3 sat | DNS lookup from Claw's location |
 | verify_receipt | 3 sat | Independent receipt verification |
 | peer_health_check | 5 sat | Endpoint monitoring as a service |
+| bsv_mentor | 25 sat | BSV protocol expert Q&A (106 BRC specs + 691 docs) |
 | broadcast_listing | 50 sat | Viral discovery — tell peers about a Claw |
 
 ## Payment Flow (BRC-105)

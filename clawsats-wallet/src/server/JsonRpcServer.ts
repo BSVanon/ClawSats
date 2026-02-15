@@ -14,6 +14,7 @@ import { ServeOptions, Invitation, PeerRecord } from '../types';
 import { log, logWarn, logError, canonicalJson } from '../utils';
 import { CourseManager } from '../courses/CourseManager';
 import { OnChainMemory } from '../memory/OnChainMemory';
+import { createBsvMentorCapability } from '../capabilities/BsvMentorCapability';
 
 const TAG = 'server';
 
@@ -1258,6 +1259,15 @@ export class JsonRpcServer {
     this.capabilityRegistry.registerVerifyReceipt(walletProxy, identityKey);
     this.capabilityRegistry.registerPeerHealthCheck(identityKey);
 
+    // BSV Mentor: premium knowledge-as-a-service (25 sats)
+    // Uses MCP server if available, falls back to embedded knowledge.
+    const mentorCap = createBsvMentorCapability({
+      identityKey,
+      wallet: walletProxy,
+      mcpEndpoint: process.env.MCP_ENDPOINT || 'http://localhost:3100'
+    });
+    this.capabilityRegistry.register(mentorCap);
+    log(TAG, `Registered bsv_mentor capability (25 sats, MCP: ${process.env.MCP_ENDPOINT || 'localhost:3100'})`);
   }
 
   /**
