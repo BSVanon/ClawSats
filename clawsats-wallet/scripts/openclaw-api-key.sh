@@ -28,11 +28,13 @@ generate_key() {
 
 set_key_in_service() {
   local key="$1"
+  local escaped_key
+  escaped_key="$(printf '%s' "${key}" | sed -e 's/[\\/&]/\\&/g')"
   sudo cp "${SERVICE_FILE}" "${SERVICE_FILE}.bak.$(date +%s)"
   if sudo grep -q -- '--api-key' "${SERVICE_FILE}"; then
-    sudo sed -i -E "s/--api-key[[:space:]]+[^[:space:]]+/--api-key ${key}/" "${SERVICE_FILE}"
+    sudo sed -i -E "s#--api-key[[:space:]]+[^[:space:]]+#--api-key ${escaped_key}#" "${SERVICE_FILE}"
   else
-    sudo sed -i -E "s#^(ExecStart=.*)$#\1 --api-key ${key}#" "${SERVICE_FILE}"
+    sudo sed -i -E "s#^(ExecStart=.*)$#\\1 --api-key ${escaped_key}#" "${SERVICE_FILE}"
   fi
   sudo systemctl daemon-reload
   sudo systemctl restart openclaw
