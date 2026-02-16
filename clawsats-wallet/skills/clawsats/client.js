@@ -225,6 +225,32 @@ async function cmdCapabilities(endpoint) {
   console.log(`Could not reach ${endpoint}`);
 }
 
+function normalizeCapabilityParams(capability, rawParams) {
+  const params = rawParams && typeof rawParams === 'object' ? { ...rawParams } : {};
+
+  if (capability === 'dns_resolve') {
+    if (!params.hostname && typeof params.domain === 'string') {
+      params.hostname = params.domain;
+    }
+    delete params.domain;
+  }
+
+  if (capability === 'peer_health_check') {
+    if (!params.endpoint && typeof params.peer === 'string') {
+      params.endpoint = params.peer;
+    }
+    delete params.peer;
+  }
+
+  if (capability === 'fetch_url') {
+    if (!params.url && typeof params.endpoint === 'string') {
+      params.url = params.endpoint;
+    }
+  }
+
+  return params;
+}
+
 async function cmdCall(endpoint, capability, paramsJson) {
   if (!endpoint || !capability) {
     throw new Error('Usage: client.js call <endpoint> <capability> [json-params]');
@@ -232,7 +258,8 @@ async function cmdCall(endpoint, capability, paramsJson) {
 
   await ensureWallet();
 
-  const params = paramsJson ? JSON.parse(paramsJson) : {};
+  const parsedParams = paramsJson ? JSON.parse(paramsJson) : {};
+  const params = normalizeCapabilityParams(capability, parsedParams);
   const url = `${endpoint}/call/${capability}`;
 
   console.log(`\nCalling ${capability} on ${endpoint}...`);

@@ -54,8 +54,10 @@ node {baseDir}/client.js call <endpoint> <capability> [json-params]
 Examples:
 - `node {baseDir}/client.js call http://45.76.10.20:3321 echo '{"message":"hello"}'`
 - `node {baseDir}/client.js call http://45.76.10.20:3321 fetch_url '{"url":"https://example.com"}'`
-- `node {baseDir}/client.js call http://45.76.10.20:3321 dns_resolve '{"domain":"bitcoin.org","type":"A"}'`
+- `node {baseDir}/client.js call http://45.76.10.20:3321 dns_resolve '{"hostname":"bitcoin.org","type":"A"}'`
 - `node {baseDir}/client.js call http://45.76.10.20:3321 sign_message '{"message":"attest this"}'`
+
+`dns_resolve` also accepts `domain` as an alias and auto-maps it to `hostname`.
 
 ### Check Wallet Balance
 

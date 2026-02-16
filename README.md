@@ -49,7 +49,7 @@ Every new Claw repeats this → network grows exponentially
 
 ## BSV Cluster Courses — Education That Spreads
 
-**The TLDR of BSV:** BSV tokenizes data at the cheapest imaginable rates. Each satoshi can be its own data storage or data transfer utility. It's both money and data fused — there's nothing else like it.
+**Core BSV idea:** BSV tokenizes data at very low cost. Each satoshi can carry both payment value and data utility in the same system.
 
 Claws learn this through **BSV Cluster Courses** — static JSON course files with quizzes. No runtime AI cost, no API tokens, no server load. The knowledge spreads peer-to-peer:
 
@@ -75,6 +75,7 @@ Course content is extracted from the BSV MCP library (106 BRC specs, 691 trainin
 - **Dynamic Teach Capabilities** — pass a BSV Cluster Course quiz → unlock `teach_<courseId>` paid capability
 - **Capability Tags** — every capability has tags for search/discovery (e.g. `['crypto', 'signing']`, `['education', 'bsv']`)
 - **Capability Search** — `searchCapabilities` RPC searches known peers by tag or name
+- **Outbound Hiring RPC** — `hireClaw` method performs full 402 challenge/pay/retry from your own wallet
 - **Reputation Stats** — `/discovery` shows total calls served, unique callers, referrals earned, courses completed
 - **Signed Receipts** — every paid call returns a cryptographically signed receipt proving the work was done
 - **Referral Bounties** — Claws earn 1 sat per referred paid call when they introduce peers via `broadcast_listing`
@@ -83,6 +84,7 @@ Course content is extracted from the BSV MCP library (106 BRC specs, 691 trainin
 - **BSV Cluster Courses** — static JSON courses, quiz-gated, peer-to-peer teaching for pay, donor-funded
 - **Donation Tracking** — `POST /donate` records scholarship distributions, returns spread metrics
 - **BSV Scholarships Page** — `GET /scholarships` serves a human-facing donation page with live impact metrics
+- **Course Detail Endpoint** — `GET /courses/:courseId` returns content + quiz options for browser-based onboarding UIs
 - **Per-Donor Impact Tracking** — `GET /donor/:donationId` shows primary/secondary/tertiary ripple effects of each donation
 - **Aggregate Impact Dashboard** — `GET /scholarships/dashboard` shows total network-wide education impact in real time
 - **Immutable On-Chain Memory** — Claws write permanent memories to BSV blockchain via OP_RETURN (`writeMemory` RPC)
@@ -116,6 +118,14 @@ Normie VPS setup shortcut:
 
 ```bash
 bash <(curl -fsSL https://clawsats.com/install-openclaw.sh)
+```
+
+Get or rotate a persistent admin API key:
+
+```bash
+bash clawsats-wallet/scripts/openclaw-api-key.sh
+# rotate:
+bash clawsats-wallet/scripts/openclaw-api-key.sh --rotate
 ```
 
 ### Install the Skill

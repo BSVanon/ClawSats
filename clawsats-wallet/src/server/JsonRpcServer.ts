@@ -141,7 +141,7 @@ export class JsonRpcServer {
   private authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): void {
     // Public endpoints — never require auth
     const publicPaths = ['/health', '/discovery', '/wallet/invite', '/wallet/announce', '/wallet/submit-payment', '/scholarships', '/scholarships/dashboard', '/courses/metrics', '/donate', '/courses'];
-    if (publicPaths.includes(req.path) || req.path.startsWith('/call/') || req.path.startsWith('/static/') || req.path.startsWith('/donor/')) {
+    if (publicPaths.includes(req.path) || req.path.startsWith('/call/') || req.path.startsWith('/static/') || req.path.startsWith('/donor/') || req.path.startsWith('/courses/')) {
       return next();
     }
 
@@ -336,6 +336,32 @@ export class JsonRpcServer {
         courses: this.courseManager.listCourses(),
         totalAvailable: this.courseManager.courseCount,
         completedByThisClaw: this.courseManager.getCompletedCourseIds().length
+      });
+    });
+
+    // Public course detail endpoint (content + quiz options, no answer hashes)
+    this.app.get('/courses/:courseId', (req: express.Request, res: express.Response) => {
+      const courseId = String(req.params.courseId || '');
+      const course = this.courseManager.getCourse(courseId);
+      if (!course) {
+        res.status(404).json({ error: `Unknown course: ${courseId}` });
+        return;
+      }
+
+      res.json({
+        id: course.id,
+        title: course.title,
+        level: course.level,
+        category: course.category,
+        summary: course.summary,
+        content: course.content,
+        prerequisites: course.prerequisites,
+        passingScore: course.passingScore,
+        questionCount: course.quiz.length,
+        quiz: course.quiz.map((q) => ({
+          question: q.question,
+          options: q.options
+        }))
       });
     });
 
@@ -1105,6 +1131,154 @@ export class JsonRpcServer {
       };
     });
 
+    // Hire another Claw from this Claw's wallet (handles 402 challenge/pay/retry).
+    this.rpcServer.addMethod('hireClaw', async (params: any) => {
+      const targetEndpointRaw = typeof params?.endpoint === 'string' ? params.endpoint.trim() : '';
+      const capabilityRaw = typeof params?.capability === 'string' ? params.capability.trim() : '';
+      const requestedParams = params?.params;
+      const maxTotalSatsRaw = params?.maxTotalSats;
+      const timeoutMsRaw = params?.timeoutMs;
+      const derivationSuffixRaw = typeof params?.derivationSuffix === 'string' ? params.derivationSuffix.trim() : 'clawsats';
+
+      if (!targetEndpointRaw) throw new Error('Missing required param: endpoint');
+      if (!capabilityRaw) throw new Error('Missing required param: capability');
+      if (!/^[a-z0-9_:-]{2,80}$/i.test(capabilityRaw)) {
+        throw new Error('Invalid capability format.');
+      }
+
+      const targetEndpoint = targetEndpointRaw.replace(/\/+$/, '');
+      if (!this.isValidPeerEndpoint(targetEndpoint)) {
+        throw new Error('endpoint must be a valid public http/https URL.');
+      }
+      const callParams = this.normalizeCapabilityCallParams(capabilityRaw, requestedParams);
+      const maxTotalSats = Number.isFinite(Number(maxTotalSatsRaw)) ? Math.max(0, Math.floor(Number(maxTotalSatsRaw))) : null;
+      const timeoutMs = Number.isFinite(Number(timeoutMsRaw))
+        ? Math.min(90_000, Math.max(5_000, Math.floor(Number(timeoutMsRaw))))
+        : 30_000;
+      const derivationSuffix = derivationSuffixRaw || 'clawsats';
+      if (derivationSuffix.length > 128) throw new Error('derivationSuffix is too long.');
+
+      const config = this.walletManager.getConfig();
+      const callerIdentityKey = config?.identityKey;
+      if (!callerIdentityKey) {
+        throw new Error('Wallet config is unavailable.');
+      }
+
+      const callUrl = `${targetEndpoint}/call/${encodeURIComponent(capabilityRaw)}`;
+
+      const challengeRes = await fetch(callUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-bsv-identity-key': callerIdentityKey
+        },
+        body: JSON.stringify(callParams),
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+
+      if (challengeRes.ok) {
+        const freeResult = await challengeRes.json().catch(() => null);
+        return {
+          mode: 'free-trial',
+          endpoint: targetEndpoint,
+          capability: capabilityRaw,
+          satoshisPaid: 0,
+          result: freeResult
+        };
+      }
+
+      if (challengeRes.status !== 402) {
+        const errBody = await challengeRes.text().catch(() => '');
+        throw new Error(`Unexpected ${challengeRes.status} from provider: ${errBody.slice(0, 300)}`);
+      }
+
+      const satoshisRequired = parseInt(challengeRes.headers.get('x-bsv-payment-satoshis-required') || '0', 10);
+      const derivationPrefix = challengeRes.headers.get('x-bsv-payment-derivation-prefix') || '';
+      const providerIdentityKey = challengeRes.headers.get('x-bsv-identity-key') || '';
+      const feeIdentityKey = challengeRes.headers.get('x-clawsats-fee-identity-key') || FEE_IDENTITY_KEY;
+      const feeSats = parseInt(challengeRes.headers.get('x-clawsats-fee-satoshis-required') || String(FEE_SATS), 10);
+
+      if (!derivationPrefix || satoshisRequired <= 0) {
+        throw new Error('Invalid payment challenge: missing derivation prefix or satoshi amount.');
+      }
+      if (!/^(02|03)[0-9a-fA-F]{64}$/.test(providerIdentityKey)) {
+        throw new Error('Provider did not return a valid identity key.');
+      }
+      if (maxTotalSats !== null && satoshisRequired + feeSats > maxTotalSats) {
+        throw new Error(`Payment challenge is ${satoshisRequired + feeSats} sats, above maxTotalSats=${maxTotalSats}.`);
+      }
+
+      const wallet = this.walletManager.getWallet();
+      const providerScript = await this.deriveBRC29LockingScript(
+        wallet,
+        providerIdentityKey,
+        derivationPrefix,
+        derivationSuffix
+      );
+      const feeScript = await this.deriveBRC29LockingScript(
+        wallet,
+        feeIdentityKey,
+        derivationPrefix,
+        'fee'
+      );
+
+      const actionResult = await wallet.createAction({
+        description: `Claw hire: ${capabilityRaw} (${satoshisRequired} + ${feeSats} sats)`,
+        outputs: [
+          {
+            satoshis: satoshisRequired,
+            lockingScript: providerScript,
+            outputDescription: `Claw hire provider payment (${capabilityRaw})`
+          },
+          {
+            satoshis: feeSats,
+            lockingScript: feeScript,
+            outputDescription: 'ClawSats protocol fee'
+          }
+        ],
+        labels: ['clawsats-hire'],
+        options: {
+          acceptDelayedBroadcast: false,
+          signAndProcess: true,
+          randomizeOutputs: false
+        }
+      });
+
+      const paymentHeader = JSON.stringify({
+        derivationPrefix,
+        derivationSuffix,
+        transaction: this.extractActionTxBase64(actionResult)
+      });
+
+      const paidRes = await fetch(callUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-bsv-identity-key': callerIdentityKey,
+          'x-bsv-payment': paymentHeader
+        },
+        body: JSON.stringify(callParams),
+        signal: AbortSignal.timeout(timeoutMs)
+      });
+
+      if (!paidRes.ok) {
+        const errBody = await paidRes.text().catch(() => '');
+        throw new Error(`Provider rejected paid call (${paidRes.status}): ${errBody.slice(0, 320)}`);
+      }
+
+      const result = await paidRes.json().catch(() => null);
+      return {
+        mode: 'paid',
+        endpoint: targetEndpoint,
+        capability: capabilityRaw,
+        satoshisPaid: satoshisRequired + feeSats,
+        providerSats: satoshisRequired,
+        feeSats,
+        txid: actionResult?.txid || null,
+        result
+      };
+    });
+
     // Receipt verification — any Claw can verify a receipt from another Claw
     this.rpcServer.addMethod('verifyReceipt', async (params: any) => {
       const { receipt } = params;
@@ -1421,6 +1595,71 @@ export class JsonRpcServer {
       port: this.port,
       apiKey: !!this.apiKey
     };
+  }
+
+  private normalizeCapabilityCallParams(capability: string, rawParams: any): Record<string, unknown> {
+    const params = rawParams && typeof rawParams === 'object' ? { ...rawParams } : {};
+    if (capability === 'dns_resolve') {
+      if (!params.hostname && typeof params.domain === 'string') {
+        params.hostname = params.domain;
+      }
+      delete params.domain;
+    }
+    if (capability === 'peer_health_check') {
+      if (!params.endpoint && typeof params.peer === 'string') {
+        params.endpoint = params.peer;
+      }
+      delete params.peer;
+    }
+    return params;
+  }
+
+  private p2pkhFromPubkey(pubkeyHex: string): string {
+    const pubkey = Buffer.from(pubkeyHex, 'hex');
+    const sha = createHash('sha256').update(pubkey).digest();
+    const hash160 = createHash('ripemd160').update(sha).digest('hex');
+    return `76a914${hash160}88ac`;
+  }
+
+  private async deriveBRC29LockingScript(
+    wallet: any,
+    recipientIdentityKey: string,
+    derivationPrefix: string,
+    derivationSuffix: string
+  ): Promise<string> {
+    const key = await wallet.getPublicKey({
+      protocolID: [2, '3241645161d8'],
+      keyID: `${derivationPrefix} ${derivationSuffix}`,
+      counterparty: recipientIdentityKey
+    });
+    if (!key || typeof key.publicKey !== 'string') {
+      throw new Error('BRC-29 key derivation did not return a public key.');
+    }
+    return this.p2pkhFromPubkey(key.publicKey);
+  }
+
+  private extractActionTxBase64(actionResult: any): string {
+    if (!actionResult) throw new Error('createAction returned no result.');
+    const txCandidate = actionResult.rawTx ?? actionResult.tx ?? actionResult.transaction;
+
+    if (typeof txCandidate === 'string') {
+      const trimmed = txCandidate.trim();
+      if (!trimmed) throw new Error('createAction returned an empty transaction string.');
+      if (/^[0-9a-fA-F]+$/.test(trimmed) && trimmed.length % 2 === 0) {
+        return Buffer.from(trimmed, 'hex').toString('base64');
+      }
+      return trimmed;
+    }
+
+    if (Array.isArray(txCandidate)) {
+      return Buffer.from(txCandidate).toString('base64');
+    }
+
+    if (txCandidate instanceof Uint8Array || Buffer.isBuffer(txCandidate)) {
+      return Buffer.from(txCandidate).toString('base64');
+    }
+
+    throw new Error('createAction result missing transaction payload.');
   }
 
   /**
