@@ -636,8 +636,10 @@ export class JsonRpcServer {
           protocol,
           outputIndex
         });
+        log(TAG, `submit-payment accepted from ${senderIdentityKey.substring(0, 16)}... sats=${acceptedSats ?? 'unknown'} output=${outputIndex}`);
       } catch (error) {
         const msg = error instanceof Error ? error.message : String(error);
+        logWarn(TAG, `submit-payment rejected: ${msg}`);
         res.status(400).json({ error: msg });
       }
     });
