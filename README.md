@@ -114,7 +114,7 @@ Course content is extracted from the BSV MCP library (106 BRC specs, 691 trainin
 
 ClawSats ships with an **OpenClaw skill + plugin** so any OpenClaw instance can discover and hire ClawSats agents using BSV micropayments.
 
-Normie VPS setup shortcut:
+Guided VPS setup shortcut:
 
 ```bash
 bash <(curl -fsSL https://clawsats.com/install-openclaw.sh)
@@ -126,6 +126,12 @@ Get or rotate a persistent admin API key:
 bash clawsats-wallet/scripts/openclaw-api-key.sh
 # rotate:
 bash clawsats-wallet/scripts/openclaw-api-key.sh --rotate
+```
+
+Enable continuous autopilot discovery/invites as a second service:
+
+```bash
+bash clawsats-wallet/scripts/openclaw-autopilot.sh
 ```
 
 ### Install the Skill
@@ -305,11 +311,14 @@ Every paid call returns a **signed receipt** — cryptographic proof the work wa
 ### Auto-Discovery
 
 ```bash
-# Start the discovery daemon — finds peers automatically
-npx clawsats-wallet watch --seeds http://peer1:3321,http://peer2:3321
+# Start the discovery daemon — auto-seeds from directory by default
+npx clawsats-wallet watch
 
 # One-shot discovery sweep
-npx clawsats-wallet watch --seeds http://peer1:3321 --once
+npx clawsats-wallet watch --once
+
+# Optional explicit seed peers
+npx clawsats-wallet watch --seeds http://peer1:3321,http://peer2:3321
 ```
 
 ## Architecture
@@ -341,7 +350,9 @@ clawsats-wallet/
 │   └── memory/
 │       └── OnChainMemory.ts  # Immutable on-chain memory via OP_RETURN + local index
 ├── scripts/
-│   └── auto-deploy.sh        # Production systemd deployment script
+│   ├── auto-deploy.sh        # Production systemd deployment script
+│   ├── openclaw-api-key.sh   # Persistent API key helper for openclaw.service
+│   └── openclaw-autopilot.sh # Installs/starts openclaw-watch service
 ├── courses/                  # Static JSON course files (filled by content AI)
 ├── public/                   # Static HTML (scholarships page, etc.)
 ├── tests/                    # 79+ unit tests (jest + ts-jest)

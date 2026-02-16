@@ -455,6 +455,8 @@ program
   .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
   .option('--interval <seconds>', 'Seconds between discovery sweeps', '60')
   .option('--seeds <urls>', 'Comma-separated seed peer URLs to bootstrap from')
+  .option('--directory-url <url>', 'Directory API URL for automatic seed bootstrap (default: CLAWSATS_DIRECTORY_URL or https://clawsats.com/api/directory)')
+  .option('--no-directory-bootstrap', 'Disable automatic directory seed bootstrap')
   .option('--once', 'Run one sweep and exit (don\'t loop)')
   .action(async (options) => {
     try {
@@ -473,30 +475,106 @@ program
       const sharing = new SharingProtocol(config, wallet);
       const knownPeers = new Map<string, { endpoint: string; capabilities: string[] }>();
       const interval = parseInt(options.interval, 10) * 1000;
+      const directoryBootstrap = options.directoryBootstrap !== false;
+      const directoryUrl = (options.directoryUrl || process.env.CLAWSATS_DIRECTORY_URL || 'https://clawsats.com/api/directory').trim();
+      const DIRECTORY_REFRESH_MS = 10 * 60 * 1000;
+      let lastDirectoryRefresh = 0;
 
-      // Seed peers from CLI or config
-      const seeds: string[] = options.seeds
+      function normalizeEndpoint(raw: unknown): string | null {
+        if (typeof raw !== 'string') return null;
+        const value = raw.trim();
+        if (!value) return null;
+        try {
+          const u = new URL(value);
+          if (u.protocol !== 'http:' && u.protocol !== 'https:') return null;
+          u.hash = '';
+          u.search = '';
+          return u.toString().replace(/\/$/, '');
+        } catch {
+          return null;
+        }
+      }
+
+      // Seed peers from CLI input
+      const cliSeeds: string[] = options.seeds
         ? options.seeds.split(',').map((s: string) => s.trim()).filter(Boolean)
         : [];
+      const seeds = new Set<string>();
+      for (const seed of cliSeeds) {
+        const normalized = normalizeEndpoint(seed);
+        if (normalized) seeds.add(normalized);
+      }
+
+      async function refreshDirectorySeeds(force = false): Promise<number> {
+        if (!directoryBootstrap) return 0;
+        const now = Date.now();
+        if (!force && now - lastDirectoryRefresh < DIRECTORY_REFRESH_MS) return 0;
+
+        let added = 0;
+        try {
+          const response = await fetch(directoryUrl, {
+            signal: AbortSignal.timeout(10000)
+          });
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+
+          const payload: any = await response.json();
+          const rows = Array.isArray(payload?.claws) ? payload.claws : [];
+          for (const row of rows) {
+            const endpoint = normalizeEndpoint(row?.endpoint);
+            if (!endpoint) continue;
+            if (!seeds.has(endpoint)) {
+              seeds.add(endpoint);
+              added++;
+            }
+          }
+          lastDirectoryRefresh = now;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          console.log(`  Directory bootstrap skipped (${msg})`);
+        }
+        return added;
+      }
 
       console.log(`🔭 ClawSats Peer Discovery Daemon`);
       console.log(`  Identity: ${config.identityKey.substring(0, 24)}...`);
       console.log(`  Interval: ${interval / 1000}s`);
-      if (seeds.length) console.log(`  Seeds: ${seeds.join(', ')}`);
+      if (seeds.size) console.log(`  CLI seeds: ${Array.from(seeds).join(', ')}`);
+      if (directoryBootstrap) {
+        console.log(`  Directory bootstrap: ${directoryUrl}`);
+      } else {
+        console.log('  Directory bootstrap: disabled');
+      }
+
+      const initialAdded = await refreshDirectorySeeds(true);
+      if (initialAdded > 0) {
+        console.log(`  Added ${initialAdded} seed endpoints from directory`);
+      }
 
       async function discoverySweep() {
         const startTime = Date.now();
         let discovered = 0;
         let probed = 0;
 
+        await refreshDirectorySeeds();
+
         // Collect all endpoints to probe: seeds + known peers
         const toProbe = new Set<string>(seeds);
         for (const [, peer] of knownPeers) {
-          if (peer.endpoint) toProbe.add(peer.endpoint);
+          const endpoint = normalizeEndpoint(peer.endpoint);
+          if (endpoint) toProbe.add(endpoint);
+        }
+
+        if (toProbe.size === 0 && directoryBootstrap) {
+          await refreshDirectorySeeds(true);
+          for (const endpoint of seeds) {
+            toProbe.add(endpoint);
+          }
         }
 
         if (toProbe.size === 0) {
-          console.log('  No peers to probe. Use --seeds or share with a peer first.');
+          console.log('  No peers to probe. Add --seeds or keep directory bootstrap enabled.');
           return;
         }
 
@@ -511,24 +589,25 @@ program
             const info: any = await discRes.json();
 
             if (!info.identityKey || info.identityKey === config.identityKey) continue;
+            const advertisedEndpoint = normalizeEndpoint(info?.endpoints?.jsonrpc) || endpoint;
 
             const isNew = !knownPeers.has(info.identityKey);
             knownPeers.set(info.identityKey, {
-              endpoint,
+              endpoint: advertisedEndpoint,
               capabilities: info.paidCapabilities?.map((c: any) => c.name) || []
             });
 
             if (isNew) {
               discovered++;
               const caps = info.paidCapabilities?.map((c: any) => `${c.name}(${c.pricePerCall}sat)`).join(', ') || 'none';
-              console.log(`  ✨ NEW: ${info.identityKey.substring(0, 16)}... at ${endpoint} — ${caps}`);
+              console.log(`  ✨ NEW: ${info.identityKey.substring(0, 16)}... at ${advertisedEndpoint} — ${caps}`);
 
               // Auto-invite: send our invitation so they know about us too
               try {
-                const invitation = await sharing.createInvitation(`claw://${endpoint}`, {
-                  recipientEndpoint: endpoint
+                const invitation = await sharing.createInvitation(`claw://${advertisedEndpoint}`, {
+                  recipientEndpoint: advertisedEndpoint
                 });
-                const invRes = await fetch(`${endpoint}/wallet/invite`, {
+                const invRes = await fetch(`${advertisedEndpoint}/wallet/invite`, {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
                   body: JSON.stringify(invitation),
