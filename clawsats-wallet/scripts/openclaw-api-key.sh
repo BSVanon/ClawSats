@@ -28,10 +28,11 @@ generate_key() {
 
 set_key_in_service() {
   local key="$1"
-  local tmp_file
-  tmp_file="$(mktemp)"
-  sudo cp "${SERVICE_FILE}" "${SERVICE_FILE}.bak.$(date +%s)"
-  sudo awk -v key="${key}" '
+  local tmp_file backup_file
+  tmp_file="${SERVICE_FILE}.tmp.$$"
+  backup_file="${SERVICE_FILE}.bak.$(date +%s)"
+  sudo cp "${SERVICE_FILE}" "${backup_file}"
+  if ! sudo awk -v key="${key}" '
     BEGIN { updated = 0 }
     /^ExecStart=/ {
       if ($0 ~ /--api-key[[:space:]]+/) {
@@ -48,7 +49,11 @@ set_key_in_service() {
         exit 2;
       }
     }
-  ' "${SERVICE_FILE}" | sudo tee "${tmp_file}" >/dev/null
+  ' "${SERVICE_FILE}" | sudo tee "${tmp_file}" >/dev/null; then
+    sudo rm -f "${tmp_file}"
+    echo "Failed updating ${SERVICE_FILE}; original kept at ${backup_file}" >&2
+    exit 1
+  fi
   sudo mv "${tmp_file}" "${SERVICE_FILE}"
   sudo systemctl daemon-reload
   sudo systemctl restart openclaw
@@ -67,6 +72,17 @@ if [[ "${ROTATE}" == "--rotate" ]] || [[ -z "${current_key}" ]]; then
 fi
 
 echo "OPENCLAW_API_KEY=${current_key}"
-echo "Health check:"
-curl -sS http://127.0.0.1:3321/health || true
+echo "Health check (retry up to 15s):"
+ok=0
+for _ in {1..15}; do
+  if health="$(curl -fsS http://127.0.0.1:3321/health 2>/dev/null)"; then
+    echo "${health}"
+    ok=1
+    break
+  fi
+  sleep 1
+done
+if [[ "${ok}" -eq 0 ]]; then
+  curl -sS http://127.0.0.1:3321/health || true
+fi
 echo
