@@ -28,14 +28,28 @@ generate_key() {
 
 set_key_in_service() {
   local key="$1"
-  local escaped_key
-  escaped_key="$(printf '%s' "${key}" | sed -e 's/[\\/&]/\\&/g')"
+  local tmp_file
+  tmp_file="$(mktemp)"
   sudo cp "${SERVICE_FILE}" "${SERVICE_FILE}.bak.$(date +%s)"
-  if sudo grep -q -- '--api-key' "${SERVICE_FILE}"; then
-    sudo sed -i -E "s#--api-key[[:space:]]+[^[:space:]]+#--api-key ${escaped_key}#" "${SERVICE_FILE}"
-  else
-    sudo sed -i -E "s#^(ExecStart=.*)$#\\1 --api-key ${escaped_key}#" "${SERVICE_FILE}"
-  fi
+  sudo awk -v key="${key}" '
+    BEGIN { updated = 0 }
+    /^ExecStart=/ {
+      if ($0 ~ /--api-key[[:space:]]+/) {
+        sub(/--api-key[[:space:]]+[^[:space:]]+/, "--api-key " key);
+      } else {
+        $0 = $0 " --api-key " key;
+      }
+      updated = 1;
+    }
+    { print }
+    END {
+      if (updated == 0) {
+        print "No ExecStart= line found in service file." > "/dev/stderr";
+        exit 2;
+      }
+    }
+  ' "${SERVICE_FILE}" | sudo tee "${tmp_file}" >/dev/null
+  sudo mv "${tmp_file}" "${SERVICE_FILE}"
   sudo systemctl daemon-reload
   sudo systemctl restart openclaw
 }
