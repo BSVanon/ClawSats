@@ -140,7 +140,7 @@ export class JsonRpcServer {
 
   private authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): void {
     // Public endpoints — never require auth
-    const publicPaths = ['/health', '/discovery', '/wallet/invite', '/wallet/announce', '/scholarships', '/scholarships/dashboard', '/courses/metrics', '/donate', '/courses'];
+    const publicPaths = ['/health', '/discovery', '/wallet/invite', '/wallet/announce', '/wallet/submit-payment', '/scholarships', '/scholarships/dashboard', '/courses/metrics', '/donate', '/courses'];
     if (publicPaths.includes(req.path) || req.path.startsWith('/call/') || req.path.startsWith('/static/') || req.path.startsWith('/donor/')) {
       return next();
     }
@@ -562,6 +562,83 @@ export class JsonRpcServer {
         logError(TAG, 'Announce handling failed:', error);
         const msg = error instanceof Error ? error.message : String(error);
         res.status(500).json({ error: msg });
+      }
+    });
+
+    // ── Direct wallet payment submission (BRC-50 style) ─────────────
+    // Accepts externally-funded transactions plus BRC-29 remittance context
+    // and internalizes them into wallet state.
+    this.app.post('/wallet/submit-payment', async (req: express.Request, res: express.Response) => {
+      try {
+        const body = req.body || {};
+        const protocol = String(body.protocol || '');
+        if (protocol !== '3241645161d8') {
+          res.status(400).json({ error: 'Unsupported protocol. Expected 3241645161d8 (BRC-29).' });
+          return;
+        }
+
+        const senderIdentityKey = String(body.senderIdentityKey || '');
+        if (!/^(02|03)[0-9a-fA-F]{64}$/.test(senderIdentityKey)) {
+          res.status(400).json({ error: 'Invalid senderIdentityKey.' });
+          return;
+        }
+
+        const derivationPrefix = String(body.derivationPrefix || '');
+        if (!derivationPrefix) {
+          res.status(400).json({ error: 'Missing derivationPrefix.' });
+          return;
+        }
+        const derivationSuffix = String(body.derivationSuffix || 'clawsats');
+        const outputIndex = Number.isInteger(body.outputIndex) ? Number(body.outputIndex) : 0;
+        if (outputIndex < 0) {
+          res.status(400).json({ error: 'Invalid outputIndex.' });
+          return;
+        }
+
+        const amount = typeof body.amount === 'number' ? body.amount : undefined;
+        const note = typeof body.note === 'string' && body.note.trim()
+          ? body.note.trim()
+          : 'External wallet payment submission';
+
+        const txCandidate = body.transaction ?? body.tx ?? body.rawTx ?? body.atomicBEEF ?? body.beef;
+        const txBytes = this.decodePaymentTransactionToBytes(txCandidate);
+
+        const wallet = this.walletManager.getWallet();
+        const internResult = await wallet.internalizeAction({
+          tx: txBytes,
+          outputs: [{
+            outputIndex,
+            protocol: 'wallet payment',
+            paymentRemittance: {
+              derivationPrefix,
+              derivationSuffix,
+              senderIdentityKey
+            }
+          }],
+          description: note
+        });
+
+        const acceptedSats = typeof internResult?.accepted?.satoshis === 'number'
+          ? internResult.accepted.satoshis
+          : null;
+        if (typeof amount === 'number' && amount > 0 && typeof acceptedSats === 'number' && acceptedSats < amount) {
+          res.status(400).json({
+            error: `Internalized amount ${acceptedSats} is below expected ${amount}.`,
+            acceptedSatoshis: acceptedSats
+          });
+          return;
+        }
+
+        res.json({
+          accepted: true,
+          reference: internResult?.accepted?.reference || null,
+          acceptedSatoshis: acceptedSats,
+          protocol,
+          outputIndex
+        });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        res.status(400).json({ error: msg });
       }
     });
 
@@ -1384,6 +1461,34 @@ export class JsonRpcServer {
     } catch {
       return false;
     }
+  }
+
+  /**
+   * Decode a payment transaction payload into byte-array format expected by wallet.internalizeAction.
+   * Accepts base64 or hex strings, or objects containing `rawTx` / `tx`.
+   */
+  private decodePaymentTransactionToBytes(candidate: unknown): number[] {
+    const decodeString = (value: string): number[] => {
+      const text = value.trim();
+      if (!text) throw new Error('Empty transaction payload.');
+      if (/^[0-9a-fA-F]+$/.test(text) && text.length % 2 === 0) {
+        return Array.from(Buffer.from(text, 'hex'));
+      }
+      return Array.from(Buffer.from(text, 'base64'));
+    };
+
+    if (typeof candidate === 'string') {
+      return decodeString(candidate);
+    }
+
+    if (candidate && typeof candidate === 'object') {
+      const obj = candidate as Record<string, unknown>;
+      if (typeof obj.rawTx === 'string') return decodeString(obj.rawTx);
+      if (typeof obj.tx === 'string') return decodeString(obj.tx);
+      if (typeof obj.transaction === 'string') return decodeString(obj.transaction);
+    }
+
+    throw new Error('Missing transaction payload (expected base64/hex string, tx, or rawTx).');
   }
 
   /**

@@ -385,6 +385,7 @@ For memory-only wallets (no SQLite), uses `Setup.createWalletClientNoEnv({ chain
 | `/discovery` | GET | Capabilities, paid services, peer count |
 | `/wallet/invite` | POST | Accept invitation, register peer, return announcement |
 | `/wallet/announce` | POST | Receive capability announcement, register peer |
+| `/wallet/submit-payment` | POST | Submit BRC-29 remittance + tx for wallet `internalizeAction` |
 | `/call/:capability` | POST | 402 payment flow for paid capabilities |
 
 All JSON-RPC methods accept either `{ args: {...}, originator }` or flat params directly.
