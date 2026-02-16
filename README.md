@@ -112,6 +112,12 @@ Course content is extracted from the BSV MCP library (106 BRC specs, 691 trainin
 
 ClawSats ships with an **OpenClaw skill + plugin** so any OpenClaw instance can discover and hire ClawSats agents using BSV micropayments.
 
+Normie VPS setup shortcut:
+
+```bash
+bash <(curl -fsSL https://clawsats.com/install-openclaw.sh)
+```
+
 ### Install the Skill
 
 Copy or symlink the skill folder into your OpenClaw workspace:
@@ -122,7 +128,7 @@ cp -r clawsats-wallet/skills/clawsats ~/.openclaw/skills/clawsats
 cp -r clawsats-wallet/skills/clawsats ./skills/clawsats
 ```
 
-Set your wallet key in `~/.openclaw/openclaw.json`:
+Set your wallet key in `~/.openclaw/openclaw.json` (optional if `config/wallet-config.json` exists on the same machine; the skill auto-loads it):
 
 ```json
 {

@@ -23,7 +23,7 @@ const path = require('path');
 const crypto = require('crypto');
 
 const DIRECTORY_URL = process.env.CLAWSATS_DIRECTORY_URL || 'https://clawsats.com/api/directory';
-const ROOT_KEY_HEX = process.env.CLAWSATS_ROOT_KEY_HEX || '';
+let ROOT_KEY_HEX = process.env.CLAWSATS_ROOT_KEY_HEX || '';
 
 // Protocol constants (must match clawsats-wallet/src/protocol/constants.ts)
 const FEE_SATS = 2;
@@ -35,19 +35,61 @@ const FEE_DERIVATION_SUFFIX = 'fee';
 let wallet = null;
 let identityKey = null;
 
+function isValidRootKeyHex(value) {
+  return typeof value === 'string' && /^[0-9a-fA-F]{64}$/.test(value.trim());
+}
+
+function tryLoadRootKeyFromConfig(configPath) {
+  try {
+    if (!configPath || !fs.existsSync(configPath)) return null;
+    const raw = fs.readFileSync(configPath, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (isValidRootKeyHex(parsed.rootKeyHex)) {
+      return parsed.rootKeyHex.trim();
+    }
+  } catch {
+    // Ignore parse/read failures and continue fallback chain.
+  }
+  return null;
+}
+
+function resolveRootKeyHex() {
+  if (isValidRootKeyHex(ROOT_KEY_HEX)) return ROOT_KEY_HEX.trim();
+
+  const candidates = [
+    process.env.CLAWSATS_CONFIG_PATH,
+    path.join(__dirname, '../../config/wallet-config.json'),
+    path.join(process.cwd(), 'config/wallet-config.json'),
+    '/opt/clawsats/clawsats-wallet/config/wallet-config.json'
+  ];
+
+  for (const candidate of candidates) {
+    const loaded = tryLoadRootKeyFromConfig(candidate);
+    if (loaded) {
+      ROOT_KEY_HEX = loaded;
+      return loaded;
+    }
+  }
+
+  return '';
+}
+
 async function ensureWallet() {
   if (wallet) return;
-  if (!ROOT_KEY_HEX || ROOT_KEY_HEX.length !== 64) {
+  const rootKeyHex = resolveRootKeyHex();
+  if (!isValidRootKeyHex(rootKeyHex)) {
     throw new Error(
-      'CLAWSATS_ROOT_KEY_HEX not set or invalid (need 64 hex chars).\n' +
-      'Generate one: node -e "console.log(require(\'crypto\').randomBytes(32).toString(\'hex\'))"'
+      'No usable root key found.\n' +
+      'Set CLAWSATS_ROOT_KEY_HEX (64 hex chars), or keep config/wallet-config.json on this machine.\n' +
+      'Example:\n' +
+      "  export CLAWSATS_ROOT_KEY_HEX=$(node -e \"console.log(require('crypto').randomBytes(32).toString('hex'))\")"
     );
   }
 
   const { Setup } = require('@bsv/wallet-toolbox');
   const { PrivateKey } = require('@bsv/sdk');
 
-  const rootKey = PrivateKey.fromHex(ROOT_KEY_HEX);
+  const rootKey = PrivateKey.fromHex(rootKeyHex);
   identityKey = rootKey.toPublicKey().toString();
 
   const dataDir = path.join(__dirname, '.wallet-data');
@@ -59,18 +101,30 @@ async function ensureWallet() {
     identityKey2: identityKey,
     filePath: undefined,
     taalApiKey: '',
-    devKeys: { [identityKey]: ROOT_KEY_HEX },
+    devKeys: { [identityKey]: rootKeyHex },
     mySQLConnection: '{}'
   };
 
-  const sw = await Setup.createWalletSQLite({
-    env,
-    rootKeyHex: ROOT_KEY_HEX,
-    filePath: path.join(dataDir, 'clawsats-client.sqlite'),
-    databaseName: 'clawsats-openclaw-client'
-  });
-
-  wallet = sw.wallet;
+  try {
+    const sw = await Setup.createWalletSQLite({
+      env,
+      rootKeyHex,
+      filePath: path.join(dataDir, 'clawsats-client.sqlite'),
+      databaseName: 'clawsats-openclaw-client'
+    });
+    wallet = sw.wallet;
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.includes('Function not implemented')) {
+      console.warn('[clawsats-client] SQLite init unavailable in this @bsv/wallet-toolbox build. Falling back to memory wallet mode.');
+    } else {
+      console.warn(`[clawsats-client] SQLite init failed (${msg}). Falling back to memory wallet mode.`);
+    }
+    wallet = await Setup.createWalletClientNoEnv({
+      chain: 'main',
+      rootKeyHex
+    });
+  }
 }
 
 // ── P2PKH helper ──
@@ -394,7 +448,8 @@ Commands:
   register <your-endpoint>              Register your Claw in the directory
 
 Env:
-  CLAWSATS_ROOT_KEY_HEX    64-char hex private key (required for paid calls)
+  CLAWSATS_ROOT_KEY_HEX    64-char hex private key (optional if config/wallet-config.json exists)
+  CLAWSATS_CONFIG_PATH     Optional explicit config path (expects rootKeyHex in JSON)
   CLAWSATS_DIRECTORY_URL   Directory API (default: https://clawsats.com/api/directory)
 
 Examples:
