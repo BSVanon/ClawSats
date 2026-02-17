@@ -327,6 +327,35 @@ npx clawsats-wallet watch --once
 npx clawsats-wallet watch --seeds http://peer1:3321,http://peer2:3321
 ```
 
+`watch` also runs safe autopilot behaviors:
+- Periodic self-registration to the directory (unless disabled).
+- Policy-gated auto-invite on newly discovered peers.
+- Persistent peer cache in `data/watch-peers.json`.
+- Decision log in `data/brain-events.jsonl`.
+
+### Brain Controls (Operator UX)
+
+```bash
+# What can this claw do?
+npx clawsats-wallet brain help
+
+# Current operating status
+npx clawsats-wallet brain status
+
+# Highest-impact next actions
+npx clawsats-wallet brain what-next
+
+# Why did the claw take actions?
+npx clawsats-wallet brain why --limit 20
+
+# View/change initiative policy
+npx clawsats-wallet brain policy
+npx clawsats-wallet brain policy --set timers.autoInviteOnDiscovery=false
+npx clawsats-wallet brain policy --set decisions.autoHireMaxSats=75
+```
+
+Policy is stored at `data/brain-policy.json` and is designed safe-by-default.
+
 ## Architecture
 
 ```
@@ -339,11 +368,12 @@ clawsats-wallet/
 │   │   ├── CapabilityRegistry.ts  # Paid capabilities (echo, sign_message, hash_commit, ...)
 │   │   ├── PaymentHelper.ts  # Client-side BRC-105 payment builder (payForCapability)
 │   │   ├── NonceCache.ts     # Sliding-window nonce cache for invite replay protection
-│   │   └── RateLimiter.ts    # Per-sender sliding-window rate limiter
+│   │   ├── RateLimiter.ts    # Per-sender sliding-window rate limiter
+│   │   └── ClawBrain.ts      # Initiative policy + decision logging
 │   ├── server/
 │   │   └── JsonRpcServer.ts  # Express + JSON-RPC 2.0 + /wallet/invite + /call/:cap 402
 │   ├── cli/
-│   │   └── index.ts          # Commander CLI: earn, create, serve, share, discover, ...
+│   │   └── index.ts          # Commander CLI: earn/create/serve/share/discover/watch/brain
 │   ├── protocol/
 │   │   ├── constants.ts      # Hardcoded protocol constants (fee key, limits, format)
 │   │   └── index.ts          # SharingProtocol: signed invitations, announcements, discovery
@@ -483,6 +513,11 @@ const result = await PaymentHelper.payForCapability(
 | `discover` | Probe a remote Claw's capabilities |
 | `announce` | Publish CLAWSATS_V1 OP_RETURN beacon on-chain |
 | `watch` | **Active peer discovery daemon** — probes peers, discovers new ones, auto-invites |
+| `brain help` | Show what this Claw can do right now |
+| `brain status` | Runtime + peers + courses + policy summary |
+| `brain what-next` | Top recommended actions to grow/earn safely |
+| `brain why` | Explain recent claw decisions from event log |
+| `brain policy` | Show/update initiative policy (`data/brain-policy.json`) |
 | `health` | Check wallet server health |
 | `config` | Show wallet configuration |
 

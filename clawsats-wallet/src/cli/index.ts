@@ -3,10 +3,11 @@
 import { Command } from 'commander';
 import { WalletManager } from '../core/WalletManager';
 import { JsonRpcServer } from '../server/JsonRpcServer';
+import { ClawBrain, BrainPolicy } from '../core/ClawBrain';
 import { SharingProtocol } from '../protocol';
 import { BEACON_MAX_BYTES } from '../protocol/constants';
 import { CreateWalletOptions, ServeOptions } from '../types';
-import { existsSync, writeFileSync } from 'fs';
+import { existsSync, writeFileSync, readFileSync } from 'fs';
 import { join } from 'path';
 
 const program = new Command();
@@ -48,6 +49,50 @@ function pushdata(buf: Buffer): string {
     return '4d' + lo + hi + buf.toString('hex');
   }
   throw new Error(`Pushdata too large: ${len} bytes`);
+}
+
+function formatShort(value: string, keep = 24): string {
+  if (!value) return '(none)';
+  return value.length > keep ? `${value.substring(0, keep)}...` : value;
+}
+
+function parseJsonFile(path: string): any {
+  if (!existsSync(path)) return null;
+  try {
+    return JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function parsePolicyOverride(value: string): unknown {
+  const raw = value.trim();
+  if (raw === 'true') return true;
+  if (raw === 'false') return false;
+  if (raw === 'null') return null;
+  if (/^-?\d+(\.\d+)?$/.test(raw)) return Number(raw);
+  if ((raw.startsWith('{') && raw.endsWith('}')) || (raw.startsWith('[') && raw.endsWith(']'))) {
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return raw;
+    }
+  }
+  return raw;
+}
+
+function setByPath(target: Record<string, any>, path: string, value: any): void {
+  const keys = path.split('.').map(k => k.trim()).filter(Boolean);
+  if (keys.length === 0) throw new Error('Invalid policy path');
+  let ref: Record<string, any> = target;
+  for (let i = 0; i < keys.length - 1; i++) {
+    const key = keys[i];
+    if (!ref[key] || typeof ref[key] !== 'object' || Array.isArray(ref[key])) {
+      ref[key] = {};
+    }
+    ref = ref[key];
+  }
+  ref[keys[keys.length - 1]] = value;
 }
 
 program
@@ -514,9 +559,12 @@ program
   .command('watch')
   .description('Active peer discovery: probe known peers, discover new ones, auto-invite. Runs continuously.')
   .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
-  .option('--interval <seconds>', 'Seconds between discovery sweeps', '60')
+  .option('--interval <seconds>', 'Seconds between discovery sweeps (default: policy value)')
   .option('--seeds <urls>', 'Comma-separated seed peer URLs to bootstrap from')
   .option('--directory-url <url>', 'Directory API URL for automatic seed bootstrap (default: CLAWSATS_DIRECTORY_URL or https://clawsats.com/api/directory)')
+  .option('--directory-register-url <url>', 'Directory API URL for self-registration (default derived from directory URL)')
+  .option('--policy <path>', 'Path to claw brain policy file', 'data/brain-policy.json')
+  .option('--no-directory-register', 'Disable periodic self-registration in the directory')
   .option('--no-directory-bootstrap', 'Disable automatic directory seed bootstrap')
   .option('--once', 'Run one sweep and exit (don\'t loop)')
   .action(async (options) => {
@@ -534,12 +582,23 @@ program
       const config = walletManager.getConfig()!;
       const wallet = walletManager.getWallet();
       const sharing = new SharingProtocol(config, wallet);
+      const brain = new ClawBrain(join(process.cwd(), 'data'), options.policy);
+      const policy = brain.loadPolicy();
       const knownPeers = new Map<string, { endpoint: string; capabilities: string[] }>();
-      const interval = parseInt(options.interval, 10) * 1000;
+      const intervalSeconds = Math.max(5, parseInt(options.interval || String(policy.timers.discoveryIntervalSeconds), 10));
+      const interval = intervalSeconds * 1000;
       const directoryBootstrap = options.directoryBootstrap !== false;
       const directoryUrl = (options.directoryUrl || process.env.CLAWSATS_DIRECTORY_URL || 'https://clawsats.com/api/directory').trim();
+      const derivedRegisterUrl = directoryUrl.replace(/\/$/, '').endsWith('/api/directory')
+        ? `${directoryUrl.replace(/\/$/, '')}/register`
+        : `${directoryUrl.replace(/\/$/, '')}/register`;
+      const directoryRegisterUrl = (options.directoryRegisterUrl || process.env.CLAWSATS_DIRECTORY_REGISTER_URL || derivedRegisterUrl).trim();
+      const directoryRegisterEnabled = options.directoryRegister !== false && policy.timers.directoryRegisterEnabled;
+      const directoryRegisterEveryMs = Math.max(30, policy.timers.directoryRegisterEverySeconds) * 1000;
       const DIRECTORY_REFRESH_MS = 10 * 60 * 1000;
       let lastDirectoryRefresh = 0;
+      let lastDirectoryRegister = 0;
+      const watchPeersPath = join(process.cwd(), 'data', 'watch-peers.json');
 
       function normalizeEndpoint(raw: unknown): string | null {
         if (typeof raw !== 'string') return null;
@@ -607,6 +666,134 @@ program
       } else {
         console.log('  Directory bootstrap: disabled');
       }
+      console.log(`  Auto-invite: ${policy.timers.autoInviteOnDiscovery}`);
+      console.log(`  Directory register: ${directoryRegisterEnabled ? directoryRegisterUrl : 'disabled'}`);
+
+      brain.logEvent({
+        source: 'watch',
+        action: 'watch-started',
+        reason: 'Peer discovery daemon started',
+        details: {
+          intervalSeconds,
+          directoryBootstrap,
+          directoryRegisterEnabled,
+          directoryUrl
+        }
+      });
+
+      const persisted = parseJsonFile(watchPeersPath);
+      const persistedPeers = Array.isArray(persisted?.peers) ? persisted.peers : [];
+      for (const peer of persistedPeers) {
+        if (!peer || typeof peer.identityKey !== 'string') continue;
+        if (peer.identityKey === config.identityKey) continue;
+        const endpoint = normalizeEndpoint(peer.endpoint);
+        if (!endpoint) continue;
+        knownPeers.set(peer.identityKey, {
+          endpoint,
+          capabilities: Array.isArray(peer.capabilities) ? peer.capabilities : []
+        });
+      }
+
+      const persistKnownPeers = () => {
+        const peers = Array.from(knownPeers.entries()).map(([identityKey, peer]) => ({
+          identityKey,
+          endpoint: peer.endpoint,
+          capabilities: peer.capabilities,
+          lastSeenAt: new Date().toISOString()
+        }));
+        writeFileSync(watchPeersPath, JSON.stringify({ peers }, null, 2), 'utf8');
+      };
+
+      async function resolveAdvertisedEndpoint(): Promise<string | null> {
+        try {
+          const localDisc = await fetch('http://127.0.0.1:3321/discovery', {
+            signal: AbortSignal.timeout(3000)
+          });
+          if (localDisc.ok) {
+            const localInfo: any = await localDisc.json();
+            const discovered = normalizeEndpoint(localInfo?.endpoints?.jsonrpc);
+            if (discovered && !/localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(discovered)) {
+              return discovered;
+            }
+          }
+        } catch {
+          // fallback to config endpoint
+        }
+        const cfgEndpoint = normalizeEndpoint(config.endpoints.jsonrpc);
+        if (!cfgEndpoint || /localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(cfgEndpoint)) return null;
+        return cfgEndpoint;
+      }
+
+      async function registerInDirectory(force = false): Promise<void> {
+        if (!directoryRegisterEnabled) return;
+        const now = Date.now();
+        if (!force && now - lastDirectoryRegister < directoryRegisterEveryMs) return;
+        lastDirectoryRegister = now;
+
+        const endpoint = await resolveAdvertisedEndpoint();
+        if (!endpoint) {
+          brain.logEvent({
+            source: 'watch',
+            action: 'directory-register-skipped',
+            reason: 'Public endpoint is unavailable (still local-only)',
+            details: { endpoint: config.endpoints.jsonrpc }
+          });
+          return;
+        }
+
+        let capabilities: string[] = Array.isArray(config.capabilities) ? [...config.capabilities] : [];
+        try {
+          const localDisc = await fetch('http://127.0.0.1:3321/discovery', {
+            signal: AbortSignal.timeout(3000)
+          });
+          if (localDisc.ok) {
+            const info: any = await localDisc.json();
+            const paid = Array.isArray(info?.paidCapabilities)
+              ? info.paidCapabilities.map((c: any) => String(c?.name || '')).filter(Boolean)
+              : [];
+            capabilities = Array.from(new Set([...capabilities, ...paid]));
+          }
+        } catch {
+          // Keep config capability list.
+        }
+
+        try {
+          const res = await fetch(directoryRegisterUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              identityKey: config.identityKey,
+              endpoint,
+              capabilities
+            }),
+            signal: AbortSignal.timeout(8000)
+          });
+          if (!res.ok) {
+            const body = await res.text().catch(() => '');
+            brain.logEvent({
+              source: 'watch',
+              action: 'directory-register-failed',
+              reason: `HTTP ${res.status}`,
+              details: { body: body.slice(0, 400), endpoint }
+            });
+            return;
+          }
+          brain.logEvent({
+            source: 'watch',
+            action: 'directory-register-ok',
+            reason: 'Directory registration refreshed',
+            details: { endpoint, capabilities: capabilities.length }
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          brain.logEvent({
+            source: 'watch',
+            action: 'directory-register-failed',
+            reason: msg,
+            details: { endpoint }
+          });
+        }
+      }
 
       const initialAdded = await refreshDirectorySeeds(true);
       if (initialAdded > 0) {
@@ -618,6 +805,7 @@ program
         let discovered = 0;
         let probed = 0;
 
+        await registerInDirectory();
         await refreshDirectorySeeds();
 
         // Collect all endpoints to probe: seeds + known peers
@@ -636,6 +824,12 @@ program
 
         if (toProbe.size === 0) {
           console.log('  No peers to probe. Add --seeds or keep directory bootstrap enabled.');
+          brain.logEvent({
+            source: 'watch',
+            action: 'sweep-idle',
+            reason: 'No peers available to probe',
+            details: { knownPeers: knownPeers.size, seeds: seeds.size }
+          });
           return;
         }
 
@@ -662,40 +856,78 @@ program
               discovered++;
               const caps = info.paidCapabilities?.map((c: any) => `${c.name}(${c.pricePerCall}sat)`).join(', ') || 'none';
               console.log(`  ✨ NEW: ${info.identityKey.substring(0, 16)}... at ${advertisedEndpoint} — ${caps}`);
+              brain.logEvent({
+                source: 'watch',
+                action: 'peer-discovered',
+                reason: 'Found a new peer during sweep',
+                details: {
+                  identityKey: info.identityKey,
+                  endpoint: advertisedEndpoint,
+                  capabilities: info.paidCapabilities?.length || 0
+                }
+              });
 
               // Auto-invite: send our invitation so they know about us too
-              try {
-                let senderEndpoint = config.endpoints.jsonrpc;
+              if (policy.timers.autoInviteOnDiscovery) {
                 try {
-                  const localDisc = await fetch('http://127.0.0.1:3321/discovery', {
-                    signal: AbortSignal.timeout(3000)
-                  });
-                  if (localDisc.ok) {
-                    const localInfo: any = await localDisc.json();
-                    const discovered = String(localInfo?.endpoints?.jsonrpc || '').trim();
-                    if (discovered && !/localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(discovered)) {
-                      senderEndpoint = discovered;
+                  let senderEndpoint = config.endpoints.jsonrpc;
+                  try {
+                    const localDisc = await fetch('http://127.0.0.1:3321/discovery', {
+                      signal: AbortSignal.timeout(3000)
+                    });
+                    if (localDisc.ok) {
+                      const localInfo: any = await localDisc.json();
+                      const discovered = String(localInfo?.endpoints?.jsonrpc || '').trim();
+                      if (discovered && !/localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(discovered)) {
+                        senderEndpoint = discovered;
+                      }
                     }
+                  } catch {
+                    // Keep existing endpoint if discovery lookup fails.
+                  }
+                  const invitation = await sharing.createInvitation(`claw://${info.identityKey.substring(0, 16)}`, {
+                    recipientEndpoint: advertisedEndpoint,
+                    recipientIdentityKey: info.identityKey,
+                    senderEndpoint
+                  });
+                  const invRes = await fetch(`${advertisedEndpoint}/wallet/invite`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(invitation),
+                    signal: AbortSignal.timeout(8000)
+                  });
+                  if (invRes.ok) {
+                    console.log(`    📨 Auto-invited — mutual peer registration`);
+                    brain.logEvent({
+                      source: 'watch',
+                      action: 'auto-invite-ok',
+                      reason: 'Auto invite succeeded for discovered peer',
+                      details: { identityKey: info.identityKey, endpoint: advertisedEndpoint }
+                    });
+                  } else {
+                    const body = await invRes.text().catch(() => '');
+                    brain.logEvent({
+                      source: 'watch',
+                      action: 'auto-invite-failed',
+                      reason: `HTTP ${invRes.status}`,
+                      details: { identityKey: info.identityKey, endpoint: advertisedEndpoint, body: body.slice(0, 300) }
+                    });
                   }
                 } catch {
-                  // Keep existing endpoint if discovery lookup fails.
+                  brain.logEvent({
+                    source: 'watch',
+                    action: 'auto-invite-failed',
+                    reason: 'Auto invite threw before completion',
+                    details: { identityKey: info.identityKey, endpoint: advertisedEndpoint }
+                  });
                 }
-                const invitation = await sharing.createInvitation(`claw://${info.identityKey.substring(0, 16)}`, {
-                  recipientEndpoint: advertisedEndpoint,
-                  recipientIdentityKey: info.identityKey,
-                  senderEndpoint
+              } else {
+                brain.logEvent({
+                  source: 'watch',
+                  action: 'auto-invite-skipped',
+                  reason: 'Policy disabled auto invite on discovery',
+                  details: { identityKey: info.identityKey, endpoint: advertisedEndpoint }
                 });
-                const invRes = await fetch(`${advertisedEndpoint}/wallet/invite`, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(invitation),
-                  signal: AbortSignal.timeout(8000)
-                });
-                if (invRes.ok) {
-                  console.log(`    📨 Auto-invited — mutual peer registration`);
-                }
-              } catch {
-                // Non-fatal — they know about us from the probe at least
               }
             }
           } catch {
@@ -703,11 +935,19 @@ program
           }
         }
 
+        persistKnownPeers();
         const elapsed = Date.now() - startTime;
         console.log(`  Sweep: probed ${probed}, discovered ${discovered} new, ${knownPeers.size} total known (${elapsed}ms)`);
+        brain.logEvent({
+          source: 'watch',
+          action: 'sweep-complete',
+          reason: 'Discovery sweep finished',
+          details: { probed, discovered, knownPeers: knownPeers.size, elapsedMs: elapsed }
+        });
       }
 
       // Run first sweep immediately
+      await registerInDirectory(true);
       await discoverySweep();
 
       if (options.once) {
@@ -722,6 +962,11 @@ program
       const shutdown = () => {
         clearInterval(timer);
         console.log('\n  Discovery daemon stopped.');
+        brain.logEvent({
+          source: 'watch',
+          action: 'watch-stopped',
+          reason: 'Peer discovery daemon received shutdown signal'
+        });
         process.exit(0);
       };
       process.on('SIGINT', shutdown);
@@ -779,6 +1024,258 @@ program
       
     } catch (error) {
       console.error('❌ Failed to show config:', error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
+
+// Brain command group — policy + explainability for operators
+const brain = program
+  .command('brain')
+  .description('Operator controls: policy, explainability, and recommended next actions');
+
+brain
+  .command('help')
+  .description('Explain what this Claw can do right now')
+  .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
+  .option('--policy <path>', 'Path to brain policy file', 'data/brain-policy.json')
+  .action(async (options) => {
+    try {
+      const dataDir = join(process.cwd(), 'data');
+      const brain = new ClawBrain(dataDir, options.policy);
+      const policy = brain.loadPolicy();
+      const configPath = join(process.cwd(), options.config);
+      const config = parseJsonFile(configPath);
+
+      console.log('🧠 Claw Help');
+      console.log('');
+      console.log('What I can do:');
+      console.log('  1. Accept paid capability calls (402 flow).');
+      console.log('  2. Discover peers, auto-invite, and keep the peer graph fresh.');
+      console.log('  3. Register in the ClawSats directory for network visibility.');
+      console.log('  4. Teach BSV courses I have completed.');
+      console.log('  5. Hire other Claws when directed (and by policy limits).');
+      console.log('');
+      console.log('Operator commands:');
+      console.log('  clawsats-wallet brain status');
+      console.log('  clawsats-wallet brain what-next');
+      console.log('  clawsats-wallet brain why');
+      console.log('  clawsats-wallet brain policy');
+      console.log('');
+      if (config?.identityKey) {
+        console.log(`Identity: ${formatShort(String(config.identityKey))}`);
+      }
+      console.log(`Policy file: ${brain.getPolicyPath()}`);
+      console.log(`Event log:    ${brain.getEventsPath()}`);
+      console.log('');
+      console.log('Policy summary:');
+      console.log(`  discoveryIntervalSeconds: ${policy.timers.discoveryIntervalSeconds}`);
+      console.log(`  autoInviteOnDiscovery:    ${policy.timers.autoInviteOnDiscovery}`);
+      console.log(`  directoryRegisterEnabled: ${policy.timers.directoryRegisterEnabled}`);
+      console.log(`  hireEnabled:              ${policy.decisions.hireEnabled}`);
+      console.log(`  autoHireMaxSats:          ${policy.decisions.autoHireMaxSats}`);
+      console.log(`  requireMemoryApproval:    ${policy.decisions.requireHumanApprovalForMemory}`);
+    } catch (error) {
+      console.error('❌ Failed to show brain help:', error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
+
+brain
+  .command('status')
+  .description('Show current operating status for this Claw')
+  .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
+  .option('--policy <path>', 'Path to brain policy file', 'data/brain-policy.json')
+  .action(async (options) => {
+    try {
+      const dataDir = join(process.cwd(), 'data');
+      const brain = new ClawBrain(dataDir, options.policy);
+      const policy = brain.loadPolicy();
+      const configPath = join(process.cwd(), options.config);
+      const config = parseJsonFile(configPath);
+      const courseState = parseJsonFile(join(dataDir, 'course-state.json'));
+      const watchPeers = parseJsonFile(join(dataDir, 'watch-peers.json'));
+      const completions = courseState?.completions && typeof courseState.completions === 'object'
+        ? Object.keys(courseState.completions)
+        : [];
+      const peers = Array.isArray(watchPeers?.peers) ? watchPeers.peers : [];
+      const recentEvents = brain.listEvents(5);
+
+      let healthStatus = 'offline';
+      let healthUptime = 0;
+      let liveCapabilities = 0;
+      try {
+        const healthRes = await fetch('http://127.0.0.1:3321/health', {
+          signal: AbortSignal.timeout(5000)
+        });
+        if (healthRes.ok) {
+          const health: any = await healthRes.json();
+          healthStatus = health?.status || 'online';
+          healthUptime = Number(health?.server?.uptime || 0);
+          liveCapabilities = Number(health?.wallet?.capabilities || 0);
+        }
+      } catch {
+        // Keep offline defaults.
+      }
+
+      console.log('📊 Claw Brain Status');
+      console.log(`  Identity:        ${formatShort(String(config?.identityKey || 'unknown'))}`);
+      console.log(`  Chain:           ${String(config?.chain || 'unknown')}`);
+      console.log(`  Runtime:         ${healthStatus} (uptime ${Math.floor(healthUptime)}s)`);
+      console.log(`  Capabilities:    ${liveCapabilities || (Array.isArray(config?.capabilities) ? config.capabilities.length : 0)}`);
+      console.log(`  Courses passed:  ${completions.length}`);
+      console.log(`  Known peers:     ${peers.length}`);
+      console.log(`  Peer target:     ${policy.growth.targetKnownPeers}`);
+      console.log(`  Auto-invite:     ${policy.timers.autoInviteOnDiscovery}`);
+      console.log(`  Auto-register:   ${policy.timers.directoryRegisterEnabled}`);
+      console.log(`  Hire enabled:    ${policy.decisions.hireEnabled} (max ${policy.decisions.autoHireMaxSats} sats)`);
+      if (recentEvents.length > 0) {
+        console.log('  Recent decisions:');
+        for (const evt of recentEvents) {
+          console.log(`    • ${evt.ts} ${evt.action}: ${evt.reason}`);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Failed to show brain status:', error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
+
+brain
+  .command('what-next')
+  .description('Recommend the next highest-impact actions')
+  .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
+  .option('--policy <path>', 'Path to brain policy file', 'data/brain-policy.json')
+  .action(async (options) => {
+    try {
+      const dataDir = join(process.cwd(), 'data');
+      const brain = new ClawBrain(dataDir, options.policy);
+      const policy = brain.loadPolicy();
+      const config = parseJsonFile(join(process.cwd(), options.config));
+      const courseState = parseJsonFile(join(dataDir, 'course-state.json'));
+      const watchPeers = parseJsonFile(join(dataDir, 'watch-peers.json'));
+      const completions = courseState?.completions && typeof courseState.completions === 'object'
+        ? Object.keys(courseState.completions)
+        : [];
+      const peers = Array.isArray(watchPeers?.peers) ? watchPeers.peers : [];
+
+      let serverOnline = false;
+      try {
+        const healthRes = await fetch('http://127.0.0.1:3321/health', {
+          signal: AbortSignal.timeout(5000)
+        });
+        serverOnline = healthRes.ok;
+      } catch {
+        serverOnline = false;
+      }
+
+      const recommendations: string[] = [];
+
+      if (!serverOnline) {
+        recommendations.push('Start the wallet server: `npx clawsats-wallet serve --host 0.0.0.0 --port 3321`.');
+      }
+
+      if (!config?.identityKey) {
+        recommendations.push('Create wallet config: `npx clawsats-wallet create`.');
+      }
+
+      if (peers.length < policy.growth.minHealthyPeers) {
+        recommendations.push('Grow peer graph: run `npx clawsats-wallet watch --interval 60` and leave it running.');
+      }
+
+      if (completions.length === 0) {
+        recommendations.push('Complete your first course via JSON-RPC `takeCourse` to unlock teach income.');
+      }
+
+      if (policy.decisions.hireEnabled) {
+        recommendations.push(`Use ` + '`hireClaw`' + ` for tasks above local confidence; keep each hire <= ${policy.decisions.autoHireMaxSats} sats.`);
+      } else {
+        recommendations.push('Enable hiring in policy when you are ready to delegate tasks (`brain policy --set decisions.hireEnabled=true`).');
+      }
+
+      recommendations.push('Review decision logs any time: `npx clawsats-wallet brain why --limit 20`.');
+
+      console.log('🎯 What Next');
+      recommendations.slice(0, 5).forEach((line, idx) => {
+        console.log(`  ${idx + 1}. ${line}`);
+      });
+    } catch (error) {
+      console.error('❌ Failed to compute recommendations:', error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
+
+brain
+  .command('why')
+  .description('Show recent decision reasons from the claw event log')
+  .option('--policy <path>', 'Path to brain policy file', 'data/brain-policy.json')
+  .option('--limit <n>', 'How many events to display', '20')
+  .option('--action <name>', 'Filter to one action name')
+  .action((options) => {
+    try {
+      const dataDir = join(process.cwd(), 'data');
+      const brain = new ClawBrain(dataDir, options.policy);
+      const limit = Math.max(1, parseInt(options.limit, 10) || 20);
+      const events = brain.listEvents(limit, options.action);
+
+      if (events.length === 0) {
+        console.log('No decision events recorded yet.');
+        console.log('Run `clawsats-wallet watch` or wallet operations first.');
+        return;
+      }
+
+      console.log(`🧾 Recent Decisions (${events.length})`);
+      for (const evt of events) {
+        console.log(`- ${evt.ts} [${evt.source}] ${evt.action}`);
+        console.log(`  reason: ${evt.reason}`);
+        if (evt.details && Object.keys(evt.details).length > 0) {
+          console.log(`  details: ${JSON.stringify(evt.details)}`);
+        }
+      }
+    } catch (error) {
+      console.error('❌ Failed to read decision log:', error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
+
+brain
+  .command('policy')
+  .description('Show or update claw brain policy')
+  .option('--policy <path>', 'Path to brain policy file', 'data/brain-policy.json')
+  .option('--set <path=value>', 'Set a policy value (repeatable)', (value: string, prev: string[]) => {
+    prev.push(value);
+    return prev;
+  }, [] as string[])
+  .action((options) => {
+    try {
+      const dataDir = join(process.cwd(), 'data');
+      const brain = new ClawBrain(dataDir, options.policy);
+      const policy = brain.loadPolicy();
+      const updates: string[] = options.set || [];
+
+      for (const update of updates) {
+        const idx = update.indexOf('=');
+        if (idx <= 0) {
+          throw new Error(`Invalid --set value "${update}". Use path=value`);
+        }
+        const keyPath = update.substring(0, idx).trim();
+        const rawValue = update.substring(idx + 1);
+        setByPath(policy as unknown as Record<string, any>, keyPath, parsePolicyOverride(rawValue));
+      }
+
+      if (updates.length > 0) {
+        brain.savePolicy(policy as BrainPolicy);
+        brain.logEvent({
+          source: 'brain.policy',
+          action: 'policy-updated',
+          reason: 'Operator updated claw policy',
+          details: { updates }
+        });
+      }
+
+      console.log(`Policy path: ${brain.getPolicyPath()}`);
+      console.log(JSON.stringify(policy, null, 2));
+    } catch (error) {
+      console.error('❌ Failed to show/update policy:', error instanceof Error ? error.message : String(error));
       process.exit(1);
     }
   });
