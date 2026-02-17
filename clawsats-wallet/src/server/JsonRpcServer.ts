@@ -1080,7 +1080,8 @@ export class JsonRpcServer {
       const sharing = new SharingProtocol(config, wallet);
       const invitation = await sharing.createInvitation(`claw://${recipientIdentityKey.substring(0, 16)}`, {
         recipientEndpoint: endpoint,
-        recipientIdentityKey
+        recipientIdentityKey,
+        senderEndpoint: this.publicEndpoint || undefined
       });
 
       const res = await fetch(`${endpoint}/wallet/invite`, {

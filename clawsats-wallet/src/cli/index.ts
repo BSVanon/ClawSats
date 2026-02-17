@@ -153,6 +153,7 @@ program
   .command('share')
   .description('Share wallet capabilities with other Claws')
   .requiredOption('-r, --recipient <clawIdOrUrl>', 'Recipient Claw ID or endpoint URL (e.g., http://1.2.3.4:3321)')
+  .option('--sender-endpoint <url>', 'Public endpoint URL this Claw should advertise in invitations')
   .option('-o, --output <file>', 'Save invitation to file instead of sending')
   .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
   .action(async (options) => {
@@ -176,6 +177,31 @@ program
       const wallet = walletManager.getWallet();
       const sharing = new SharingProtocol(config, wallet);
       const isHttpRecipient = options.recipient.startsWith('http://') || options.recipient.startsWith('https://');
+      const isLocalEndpoint = (value?: string) => {
+        if (!value) return true;
+        return /localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(value);
+      };
+
+      let senderEndpoint = String(options.senderEndpoint || config.endpoints.jsonrpc || '').trim();
+      if (isHttpRecipient && isLocalEndpoint(senderEndpoint)) {
+        try {
+          const localDisc = await fetch('http://127.0.0.1:3321/discovery', {
+            signal: AbortSignal.timeout(3000)
+          });
+          if (localDisc.ok) {
+            const localInfo: any = await localDisc.json();
+            const discoveredSender = String(localInfo?.endpoints?.jsonrpc || '').trim();
+            if (!isLocalEndpoint(discoveredSender)) {
+              senderEndpoint = discoveredSender;
+            }
+          }
+        } catch {
+          // We'll fail with a clear message below if sender endpoint remains local-only.
+        }
+      }
+      if (isHttpRecipient && isLocalEndpoint(senderEndpoint)) {
+        throw new Error('Sender endpoint is local-only. Pass --sender-endpoint http://YOUR_PUBLIC_HOST:3321');
+      }
 
       let recipientIdentityKey: string | undefined;
       if (isHttpRecipient) {
@@ -199,7 +225,8 @@ program
 
       const invitation = await sharing.createInvitation(recipientClawId, {
         recipientEndpoint: isHttpRecipient ? options.recipient : undefined,
-        recipientIdentityKey
+        recipientIdentityKey,
+        senderEndpoint
       });
 
       if (!invitation.signature) {
@@ -638,9 +665,25 @@ program
 
               // Auto-invite: send our invitation so they know about us too
               try {
+                let senderEndpoint = config.endpoints.jsonrpc;
+                try {
+                  const localDisc = await fetch('http://127.0.0.1:3321/discovery', {
+                    signal: AbortSignal.timeout(3000)
+                  });
+                  if (localDisc.ok) {
+                    const localInfo: any = await localDisc.json();
+                    const discovered = String(localInfo?.endpoints?.jsonrpc || '').trim();
+                    if (discovered && !/localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(discovered)) {
+                      senderEndpoint = discovered;
+                    }
+                  }
+                } catch {
+                  // Keep existing endpoint if discovery lookup fails.
+                }
                 const invitation = await sharing.createInvitation(`claw://${info.identityKey.substring(0, 16)}`, {
                   recipientEndpoint: advertisedEndpoint,
-                  recipientIdentityKey: info.identityKey
+                  recipientIdentityKey: info.identityKey,
+                  senderEndpoint
                 });
                 const invRes = await fetch(`${advertisedEndpoint}/wallet/invite`, {
                   method: 'POST',

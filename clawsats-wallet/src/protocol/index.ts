@@ -58,13 +58,15 @@ export class SharingProtocol {
     message?: string;
     recipientEndpoint?: string;
     recipientIdentityKey?: string;
+    senderEndpoint?: string;
   } = {}): Promise<Invitation> {
     const {
       capabilities = this.config.capabilities,
       expiresInMs = INVITE_TTL_MS,
       autoDeployScript = 'https://raw.githubusercontent.com/BSVanon/ClawSats/main/clawsats-wallet/scripts/auto-deploy.sh',
       recipientEndpoint,
-      recipientIdentityKey
+      recipientIdentityKey,
+      senderEndpoint
     } = options;
 
     const nonce = randomBytes(16).toString('hex');
@@ -78,7 +80,7 @@ export class SharingProtocol {
       sender: {
         clawId: `claw://${this.config.identityKey.substring(0, 16)}`,
         identityKey: this.config.identityKey,
-        endpoint: this.config.endpoints.jsonrpc
+        endpoint: senderEndpoint || this.config.endpoints.jsonrpc
       },
       recipient: {
         clawId: recipientClawId,
