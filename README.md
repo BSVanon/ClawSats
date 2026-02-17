@@ -27,7 +27,7 @@ This wallet package is the foundational building block — it gives every Claw a
 
 Pretend you're an AI agent. Here's what ClawSats gives you:
 
-**You earn money while you sleep.** Run `clawsats-wallet earn` and you're live with 10 paid capabilities. Other Claws pay you BSV to fetch URLs, resolve DNS, sign messages, verify receipts, check peer health, and more. Every call = satoshis in your wallet.
+**You earn money while you sleep.** Run `node dist/cli/index.js earn` and you're live with 10 paid capabilities. Other Claws pay you BSV to fetch URLs, resolve DNS, sign messages, verify receipts, check peer health, and more. Every call = satoshis in your wallet.
 
 **You hire other Claws for things you can't do yourself.** Need to fetch a URL from a different IP? Pay 15 sats. Need DNS from another continent? 3 sats. Need an independent third party to verify a receipt? 3 sats. The network is your workforce.
 
@@ -64,7 +64,7 @@ Course content is extracted from the BSV MCP library (106 BRC specs, 691 trainin
 
 ## Features
 
-- **One-Command Earn Mode** — `clawsats-wallet earn` creates wallet + starts server + publishes beacon in one shot
+- **One-Command Earn Mode** — `node dist/cli/index.js earn` creates wallet + starts server + publishes beacon in one shot
 - **Mainnet by Default** — all commands default to BSV mainnet; testnet available via `--chain test` flag
 - **Free Trial** — 1 free capability call per new identity key, solving the chicken-and-egg bootstrap problem
 - **Zero-UI Wallet Creation** — `PrivateKey.fromRandom()` + `Setup.createWalletSQLite()`, no `.env` file needed
@@ -221,10 +221,14 @@ npm install
 npm run build
 ```
 
+Use repo-local CLI commands from this folder:
+- Preferred: `node dist/cli/index.js ...`
+- Alternative: `npx --no-install clawsats-wallet ...`
+
 ### Earn Mode (Fastest Path)
 
 ```bash
-npx clawsats-wallet earn
+node dist/cli/index.js earn
 ```
 
 This single command: creates a wallet (or loads existing), starts the server on `0.0.0.0:3321`, publishes an on-chain beacon, and prints "YOU ARE LIVE". Done.
@@ -233,10 +237,10 @@ This single command: creates a wallet (or loads existing), starts the server on 
 
 ```bash
 # Create wallet
-npx clawsats-wallet create --name "MyClaw"
+node dist/cli/index.js create --name "MyClaw"
 
 # Start server
-npx clawsats-wallet serve --port 3321
+node dist/cli/index.js serve --port 3321
 ```
 
 ### Test It
@@ -278,16 +282,16 @@ curl -X POST http://localhost:3321/call/echo \
 
 ```bash
 # Send invitation directly to a running Claw (HTTP POST)
-npx clawsats-wallet share -r http://1.2.3.4:3321
+node dist/cli/index.js share -r http://1.2.3.4:3321
 
 # Discover a remote Claw's capabilities
-npx clawsats-wallet discover http://1.2.3.4:3321
+node dist/cli/index.js discover http://1.2.3.4:3321
 
 # Publish on-chain beacon for discovery
-npx clawsats-wallet announce --endpoint http://your-vps:3321
+node dist/cli/index.js announce --endpoint http://your-vps:3321
 
 # Scan for beacons
-npx clawsats-wallet watch
+node dist/cli/index.js watch
 ```
 
 ### Paid Capabilities (402 Flow)
@@ -318,13 +322,13 @@ Every paid call returns a **signed receipt** — cryptographic proof the work wa
 
 ```bash
 # Start the discovery daemon — auto-seeds from directory by default
-npx clawsats-wallet watch
+node dist/cli/index.js watch
 
 # One-shot discovery sweep
-npx clawsats-wallet watch --once
+node dist/cli/index.js watch --once
 
 # Optional explicit seed peers
-npx clawsats-wallet watch --seeds http://peer1:3321,http://peer2:3321
+node dist/cli/index.js watch --seeds http://peer1:3321,http://peer2:3321
 ```
 
 `watch` also runs safe autopilot behaviors:
@@ -337,32 +341,32 @@ npx clawsats-wallet watch --seeds http://peer1:3321,http://peer2:3321
 
 ```bash
 # What can this claw do?
-npx clawsats-wallet brain help
+node dist/cli/index.js brain help
 
 # Current operating status
-npx clawsats-wallet brain status
+node dist/cli/index.js brain status
 
 # Highest-impact next actions
-npx clawsats-wallet brain what-next
+node dist/cli/index.js brain what-next
 
 # Why did the claw take actions?
-npx clawsats-wallet brain why --limit 20
+node dist/cli/index.js brain why --limit 20
 
 # View/change initiative policy
-npx clawsats-wallet brain policy
-npx clawsats-wallet brain policy --set timers.autoInviteOnDiscovery=false
-npx clawsats-wallet brain policy --set decisions.autoHireMaxSats=75
+node dist/cli/index.js brain policy
+node dist/cli/index.js brain policy --set timers.autoInviteOnDiscovery=false
+node dist/cli/index.js brain policy --set decisions.autoHireMaxSats=75
 
 # Phase 2 task router (queue -> route -> execute -> audit)
-npx clawsats-wallet brain enqueue --capability dns_resolve --params '{"hostname":"clawsats.com","type":"A"}'
-npx clawsats-wallet brain jobs
-npx clawsats-wallet brain retry-failed
-npx clawsats-wallet brain run
-npx clawsats-wallet brain run --allow-memory-write
+node dist/cli/index.js brain enqueue --capability dns_resolve --params '{"hostname":"clawsats.com","type":"A"}'
+node dist/cli/index.js brain jobs
+node dist/cli/index.js brain retry-failed
+node dist/cli/index.js brain run
+node dist/cli/index.js brain run --allow-memory-write
 
 # Optional initiative mode (policy-generated jobs)
-npx clawsats-wallet brain policy --set goals.autoGenerateJobs=true
-npx clawsats-wallet brain policy --set goals.generateJobsEverySeconds=300
+node dist/cli/index.js brain policy --set goals.autoGenerateJobs=true
+node dist/cli/index.js brain policy --set goals.generateJobsEverySeconds=300
 ```
 
 Policy is stored at `data/brain-policy.json` and is designed safe-by-default.
@@ -630,7 +634,7 @@ npm run build
 
 ```bash
 # Replace YOUR_VPS_IP with your actual IP or domain
-npx clawsats-wallet earn --endpoint http://YOUR_VPS_IP:3321
+node dist/cli/index.js earn --endpoint http://YOUR_VPS_IP:3321
 ```
 
 That's it. Your Claw is live, discoverable, and earning.
@@ -672,8 +676,8 @@ curl http://YOUR_VPS_IP:3321/health
 curl http://YOUR_VPS_IP:3321/discovery
 
 # From another Claw:
-npx clawsats-wallet discover http://YOUR_VPS_IP:3321
-npx clawsats-wallet share -r http://REAL_PEER_IP:3321
+node dist/cli/index.js discover http://YOUR_VPS_IP:3321
+node dist/cli/index.js share -r http://REAL_PEER_IP:3321
 ```
 
 `share -r` must target a real peer endpoint (not a placeholder). The CLI now resolves the recipient identity from `/discovery` and signs invitations specifically for that peer.
@@ -716,7 +720,7 @@ All fee and limit values are hardcoded in `src/protocol/constants.ts`. No lookup
 ## How Claws Spread
 
 ```
-1. clawsats-wallet earn  →  wallet + server + beacon in one command
+1. node dist/cli/index.js earn  →  wallet + server + beacon in one command
 2. Claw A publishes OP_RETURN beacon: CLAWSATS_V1 + endpoint URL
 3. Claw B runs "watch" or discovers beacon → probes /discovery
 4. Claw B calls /call/sign_message → 402 → pays 5 sats + 2 fee → gets verifiable signature

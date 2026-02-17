@@ -646,9 +646,9 @@ program
       console.log(`Capabilities: ${config.capabilities.length} methods available`);
       console.log(`\nConfiguration saved to: config/wallet-config.json`);
       console.log(`\nTo start the wallet server:`);
-      console.log(`  clawsats-wallet serve`);
+      console.log(`  node dist/cli/index.js serve`);
       console.log(`\nTo share with other Claws:`);
-      console.log(`  clawsats-wallet share --recipient claw://friend-id`);
+      console.log(`  node dist/cli/index.js share --recipient claw://friend-id`);
       
     } catch (error) {
       console.error('❌ Failed to create wallet:', error instanceof Error ? error.message : String(error));
@@ -876,8 +876,8 @@ program
   .action(async (endpoint) => {
     try {
       if (!endpoint) {
-        console.log('Usage: clawsats-wallet discover <endpoint>');
-        console.log('Example: clawsats-wallet discover http://1.2.3.4:3321');
+        console.log('Usage: node dist/cli/index.js discover <endpoint>');
+        console.log('Example: node dist/cli/index.js discover http://1.2.3.4:3321');
         return;
       }
 
@@ -1057,7 +1057,7 @@ program
       console.log(`  Invite:   POST ${publicEndpoint}/wallet/invite`);
       console.log(`  Paid capabilities: ${caps.join(', ')}`);
       console.log(`\n  Share with another Claw:`);
-      console.log(`    clawsats-wallet share -r http://<peer>:3321`);
+      console.log(`    node dist/cli/index.js share -r http://<peer>:3321`);
 
       // Graceful shutdown
       const shutdown = async () => {
@@ -1612,14 +1612,14 @@ brain
       console.log('  5. Hire other Claws when directed (and by policy limits).');
       console.log('');
       console.log('Operator commands:');
-      console.log('  clawsats-wallet brain status');
-      console.log('  clawsats-wallet brain what-next');
-      console.log('  clawsats-wallet brain why');
-      console.log('  clawsats-wallet brain policy');
-      console.log('  clawsats-wallet brain enqueue --capability <name> --params <json>');
-      console.log('  clawsats-wallet brain jobs');
-      console.log('  clawsats-wallet brain retry-failed');
-      console.log('  clawsats-wallet brain run');
+      console.log('  node dist/cli/index.js brain status');
+      console.log('  node dist/cli/index.js brain what-next');
+      console.log('  node dist/cli/index.js brain why');
+      console.log('  node dist/cli/index.js brain policy');
+      console.log('  node dist/cli/index.js brain enqueue --capability <name> --params <json>');
+      console.log('  node dist/cli/index.js brain jobs');
+      console.log('  node dist/cli/index.js brain retry-failed');
+      console.log('  node dist/cli/index.js brain run');
       console.log('');
       if (config?.identityKey) {
         console.log(`Identity: ${formatShort(String(config.identityKey))}`);
@@ -1748,15 +1748,15 @@ brain
       const recommendations: string[] = [];
 
       if (!serverOnline) {
-        recommendations.push('Start the wallet server: `npx clawsats-wallet serve --host 0.0.0.0 --port 3321`.');
+        recommendations.push('Start the wallet server: `node dist/cli/index.js serve --host 0.0.0.0 --port 3321`.');
       }
 
       if (!config?.identityKey) {
-        recommendations.push('Create wallet config: `npx clawsats-wallet create`.');
+        recommendations.push('Create wallet config: `node dist/cli/index.js create`.');
       }
 
       if (peers.length < policy.growth.minHealthyPeers) {
-        recommendations.push('Grow peer graph: run `npx clawsats-wallet watch --interval 60` and leave it running.');
+        recommendations.push('Grow peer graph: run `node dist/cli/index.js watch --interval 60` and leave it running.');
       }
 
       if (completions.length === 0) {
@@ -1764,13 +1764,13 @@ brain
       }
 
       if (pendingJobs > 0 || approvalJobs > 0) {
-        recommendations.push(`Run the task router: ` + '`npx clawsats-wallet brain run`' + ` (${pendingJobs} pending, ${approvalJobs} awaiting approval).`);
+        recommendations.push(`Run the task router: ` + '`node dist/cli/index.js brain run`' + ` (${pendingJobs} pending, ${approvalJobs} awaiting approval).`);
       } else {
-        recommendations.push('Queue work for delegation: `npx clawsats-wallet brain enqueue --capability dns_resolve --params \'{"hostname":"clawsats.com","type":"A"}\'`.');
+        recommendations.push('Queue work for delegation: `node dist/cli/index.js brain enqueue --capability dns_resolve --params \'{"hostname":"clawsats.com","type":"A"}\'`.');
       }
 
       if (failedJobs > 0) {
-        recommendations.push(`Retry failed jobs: ` + '`npx clawsats-wallet brain retry-failed`' + ` (${failedJobs} failed).`);
+        recommendations.push(`Retry failed jobs: ` + '`node dist/cli/index.js brain retry-failed`' + ` (${failedJobs} failed).`);
       }
 
       if (policy.decisions.hireEnabled) {
@@ -1780,10 +1780,10 @@ brain
       }
 
       if (!policy.goals.autoGenerateJobs) {
-        recommendations.push('Enable policy initiative: `npx clawsats-wallet brain policy --set goals.autoGenerateJobs=true`.');
+        recommendations.push('Enable policy initiative: `node dist/cli/index.js brain policy --set goals.autoGenerateJobs=true`.');
       }
 
-      recommendations.push('Review decision logs any time: `npx clawsats-wallet brain why --limit 20`.');
+      recommendations.push('Review decision logs any time: `node dist/cli/index.js brain why --limit 20`.');
 
       console.log('🎯 What Next');
       recommendations.slice(0, 5).forEach((line, idx) => {
@@ -1810,7 +1810,7 @@ brain
 
       if (events.length === 0) {
         console.log('No decision events recorded yet.');
-        console.log('Run `clawsats-wallet watch` or wallet operations first.');
+        console.log('Run `node dist/cli/index.js watch` or wallet operations first.');
         return;
       }
 
