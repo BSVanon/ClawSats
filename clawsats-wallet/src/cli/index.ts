@@ -162,6 +162,182 @@ function safeParseJsonObject(raw: string | undefined): Record<string, unknown> {
   return parsed as Record<string, unknown>;
 }
 
+function normalizeCapabilityCallParams(capability: string, rawParams: Record<string, unknown>): Record<string, unknown> {
+  const params = rawParams && typeof rawParams === 'object' ? { ...rawParams } : {};
+  if (capability === 'dns_resolve') {
+    if (!params.hostname && typeof params.domain === 'string') {
+      params.hostname = params.domain;
+    }
+    delete params.domain;
+  }
+  if (capability === 'peer_health_check') {
+    if (!params.endpoint && typeof params.peer === 'string') {
+      params.endpoint = params.peer;
+    }
+    delete params.peer;
+  }
+  return params;
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || value === undefined) return JSON.stringify(value);
+  if (typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    return `[${value.map(item => stableStringify(item)).join(',')}]`;
+  }
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort((a, b) => a.localeCompare(b));
+  return `{${keys.map(key => `${JSON.stringify(key)}:${stableStringify(obj[key])}`).join(',')}}`;
+}
+
+function normalizeLocalEndpoint(raw: string | undefined): string {
+  const fallback = 'http://127.0.0.1:3321';
+  const value = String(raw || '').trim();
+  if (!value) return fallback;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return fallback;
+    if (parsed.hostname === '0.0.0.0') parsed.hostname = '127.0.0.1';
+    parsed.hash = '';
+    parsed.search = '';
+    return parsed.toString().replace(/\/$/, '');
+  } catch {
+    return fallback;
+  }
+}
+
+function isAutoHireCapabilityAllowed(policy: BrainPolicy, capability: string): boolean {
+  const allowlist = Array.isArray(policy.decisions.autoHireCapabilities)
+    ? policy.decisions.autoHireCapabilities
+    : [];
+  if (allowlist.length === 0) return true;
+  return allowlist.includes(capability);
+}
+
+interface GoalJobGenerationSummary {
+  generated: number;
+  skippedActive: number;
+  skippedCooldown: number;
+  skippedDisabled: number;
+}
+
+function enqueueGoalJobsFromPolicy(source: string, policy: BrainPolicy, brain: ClawBrain, jobs: BrainJobStore): GoalJobGenerationSummary {
+  const summary: GoalJobGenerationSummary = {
+    generated: 0,
+    skippedActive: 0,
+    skippedCooldown: 0,
+    skippedDisabled: 0
+  };
+  const goals = policy.goals;
+  if (!goals || !goals.autoGenerateJobs) return summary;
+
+  const templates = Array.isArray(goals.templates) ? goals.templates : [];
+  const nowMs = Date.now();
+  const defaultIntervalSeconds = Math.max(30, Number(goals.generateJobsEverySeconds || 300));
+  const allJobs = jobs.list();
+
+  for (let i = 0; i < templates.length; i++) {
+    const template = templates[i];
+    if (!template || template.enabled === false) {
+      summary.skippedDisabled++;
+      continue;
+    }
+
+    const capability = String(template.capability || '').trim();
+    if (!capability) {
+      summary.skippedDisabled++;
+      continue;
+    }
+
+    const params = normalizeCapabilityCallParams(
+      capability,
+      template.params && typeof template.params === 'object'
+        ? template.params as Record<string, unknown>
+        : {}
+    );
+    const fingerprint = `${capability}::${stableStringify(params)}`;
+    const matching = allJobs.filter(job => {
+      if (job.capability !== capability) return false;
+      const candidate = normalizeCapabilityCallParams(capability, job.params || {});
+      return `${job.capability}::${stableStringify(candidate)}` === fingerprint;
+    });
+
+    const hasActive = matching.some(job => ['pending', 'running', 'needs_approval'].includes(job.status));
+    if (hasActive) {
+      summary.skippedActive++;
+      continue;
+    }
+
+    const intervalSeconds = Math.max(30, Number(template.everySeconds || defaultIntervalSeconds));
+    const intervalMs = intervalSeconds * 1000;
+    const lastSeenMs = matching.reduce((max, job) => {
+      const ts = Date.parse(job.updatedAt || job.createdAt || '');
+      return Number.isFinite(ts) ? Math.max(max, ts) : max;
+    }, 0);
+
+    if (lastSeenMs > 0 && (nowMs - lastSeenMs) < intervalMs) {
+      summary.skippedCooldown++;
+      continue;
+    }
+
+    const strategyRaw = String(template.strategy || goals.defaultStrategy || 'auto').toLowerCase();
+    const strategy: BrainJobStrategy = strategyRaw === 'local' || strategyRaw === 'hire' ? strategyRaw : 'auto';
+    const maxSats = Math.max(
+      1,
+      Math.floor(
+        Number(
+          template.maxSats ??
+          goals.defaultMaxSats ??
+          policy.decisions.autoHireMaxSats
+        ) || 1
+      )
+    );
+    const priority = Math.max(
+      1,
+      Math.floor(
+        Number(
+          template.priority ??
+          goals.defaultPriority ??
+          100
+        ) || 1
+      )
+    );
+    const persistResult = template.persistResult === true;
+    const memoryCategory = template.memoryCategory || (persistResult ? 'goal-result' : undefined);
+    const memoryKey = template.memoryKey || (persistResult ? `goals/${capability}/${i}` : undefined);
+
+    const job = jobs.enqueue({
+      capability,
+      params,
+      strategy,
+      maxSats,
+      priority,
+      persistResult,
+      memoryKey,
+      memoryCategory
+    });
+
+    job.audit.push({
+      ts: new Date().toISOString(),
+      action: 'goal-generated',
+      reason: `Policy template queued job (${source})`,
+      details: { templateIndex: i, fingerprint }
+    });
+    jobs.update(job);
+    allJobs.push(job);
+
+    brain.logEvent({
+      source,
+      action: 'goal-job-generated',
+      reason: `Queued policy goal job for ${capability}`,
+      details: { jobId: job.id, templateIndex: i, strategy, maxSats, priority }
+    });
+    summary.generated++;
+  }
+
+  return summary;
+}
+
 interface ExecuteBrainJobsOptions {
   source: string;
   allowMemoryWrite: boolean;
@@ -173,6 +349,7 @@ interface ExecuteBrainJobsOptions {
   wallet: any;
   identityKey: string;
   peers: KnownPeerCandidate[];
+  localEndpoint?: string;
 }
 
 async function executeBrainJobs(options: ExecuteBrainJobsOptions): Promise<{
@@ -182,6 +359,7 @@ async function executeBrainJobs(options: ExecuteBrainJobsOptions): Promise<{
   awaitingApproval: number;
 }> {
   const { source, allowMemoryWrite, maxJobs, dataDir, policy, brain, jobs, wallet, identityKey, peers } = options;
+  const localEndpoint = normalizeLocalEndpoint(options.localEndpoint);
   const onChainMemory = new OnChainMemory(dataDir, identityKey);
   onChainMemory.loadIndex();
 
@@ -281,51 +459,70 @@ async function executeBrainJobs(options: ExecuteBrainJobsOptions): Promise<{
     });
 
     try {
-      if (job.strategy === 'local') {
-        throw new Error('Local strategy is not yet implemented. Use strategy=auto or hire.');
-      }
-      if (!policy.decisions.hireEnabled) {
-        throw new Error('Policy disabled hiring.');
-      }
-      if (
-        Array.isArray(policy.decisions.autoHireCapabilities) &&
-        policy.decisions.autoHireCapabilities.length > 0 &&
-        !policy.decisions.autoHireCapabilities.includes(job.capability)
-      ) {
-        throw new Error(`Capability "${job.capability}" is outside auto-hire allowlist.`);
-      }
-
-      const selected = pickPeerForCapability(job.capability, peers, job.selectedEndpoint);
-      if (!selected) {
-        throw new Error(`No known peer currently advertises capability "${job.capability}".`);
-      }
-      job.selectedEndpoint = selected.endpoint;
-
-      const endpoint = `${selected.endpoint}/call/${encodeURIComponent(job.capability)}`;
       const maxSats = Math.max(1, Math.floor(job.maxSats || policy.decisions.autoHireMaxSats));
+      const normalizedParams = normalizeCapabilityCallParams(job.capability, job.params || {});
+      job.params = normalizedParams;
+      const remoteCandidate = pickPeerForCapability(job.capability, peers, job.selectedEndpoint);
+      const autoHireAllowed = isAutoHireCapabilityAllowed(policy, job.capability);
+      let executionMode: 'local' | 'hire';
+      let selectedEndpoint = '';
+      let completionReason = '';
+
+      if (job.strategy === 'local') {
+        executionMode = 'local';
+        completionReason = 'Local capability executed successfully';
+      } else if (job.strategy === 'hire') {
+        if (!policy.decisions.hireEnabled) {
+          throw new Error('Policy disabled hiring.');
+        }
+        if (!autoHireAllowed) {
+          throw new Error(`Capability "${job.capability}" is outside auto-hire allowlist.`);
+        }
+        if (!remoteCandidate) {
+          throw new Error(`No known peer currently advertises capability "${job.capability}".`);
+        }
+        executionMode = 'hire';
+        selectedEndpoint = remoteCandidate.endpoint;
+        completionReason = 'Remote capability executed successfully';
+      } else {
+        if (remoteCandidate && policy.decisions.hireEnabled && autoHireAllowed) {
+          executionMode = 'hire';
+          selectedEndpoint = remoteCandidate.endpoint;
+          completionReason = 'Auto strategy selected remote capability execution';
+        } else {
+          executionMode = 'local';
+          completionReason = remoteCandidate
+            ? 'Auto strategy fell back to local execution due to hire policy constraints'
+            : 'Auto strategy fell back to local execution (no remote peer available)';
+        }
+      }
+
+      const endpointBase = executionMode === 'local' ? localEndpoint : selectedEndpoint;
+      const callEndpoint = `${endpointBase}/call/${encodeURIComponent(job.capability)}`;
       const result = await PaymentHelper.payForCapability(
         wallet,
-        endpoint,
-        job.params || {},
+        callEndpoint,
+        normalizedParams,
         identityKey,
         { maxTotalSats: maxSats, timeoutMs: 30000 }
       );
 
+      job.selectedEndpoint = endpointBase;
       job.result = result;
       job.error = undefined;
       job.status = 'completed';
       job.audit.push({
         ts: new Date().toISOString(),
         action: 'job-completed',
-        reason: 'Remote capability executed successfully',
-        details: { endpoint: selected.endpoint, capability: job.capability }
+        reason: completionReason,
+        details: { endpoint: endpointBase, capability: job.capability, strategy: executionMode }
       });
 
       brain.logEvent({
         source,
         action: 'job-completed',
         reason: `Completed job ${job.id}`,
-        details: { endpoint: selected.endpoint, capability: job.capability }
+        details: { endpoint: endpointBase, capability: job.capability, strategy: executionMode }
       });
 
       if (job.persistResult) {
@@ -993,6 +1190,7 @@ program
       }
       console.log(`  Auto-invite: ${policy.timers.autoInviteOnDiscovery}`);
       console.log(`  Directory register: ${directoryRegisterEnabled ? directoryRegisterUrl : 'disabled'}`);
+      console.log(`  Goal jobs: ${policy.goals.autoGenerateJobs} (every ${policy.goals.generateJobsEverySeconds}s)`);
 
       brain.logEvent({
         source: 'watch',
@@ -1155,7 +1353,6 @@ program
             reason: 'No peers available to probe',
             details: { knownPeers: knownPeers.size, seeds: seeds.size }
           });
-          return;
         }
 
         for (const endpoint of toProbe) {
@@ -1261,6 +1458,10 @@ program
         }
 
         persistKnownPeers();
+        const goalSummary = enqueueGoalJobsFromPolicy('watch', policy, brain, jobStore);
+        if (goalSummary.generated > 0) {
+          console.log(`  Goals: queued ${goalSummary.generated} job(s) from policy templates`);
+        }
         const jobSummary = await executeBrainJobs({
           source: 'watch',
           allowMemoryWrite: false,
@@ -1275,7 +1476,8 @@ program
             identityKey,
             endpoint: peer.endpoint,
             capabilities: peer.capabilities
-          }))
+          })),
+          localEndpoint: config.endpoints?.jsonrpc
         });
         const elapsed = Date.now() - startTime;
         console.log(`  Sweep: probed ${probed}, discovered ${discovered} new, ${knownPeers.size} total known (${elapsed}ms)`);
@@ -1291,6 +1493,7 @@ program
             discovered,
             knownPeers: knownPeers.size,
             elapsedMs: elapsed,
+            goalJobsGenerated: goalSummary.generated,
             jobsProcessed: jobSummary.processed,
             jobsCompleted: jobSummary.completed,
             jobsFailed: jobSummary.failed,
@@ -1415,6 +1618,7 @@ brain
       console.log('  clawsats-wallet brain policy');
       console.log('  clawsats-wallet brain enqueue --capability <name> --params <json>');
       console.log('  clawsats-wallet brain jobs');
+      console.log('  clawsats-wallet brain retry-failed');
       console.log('  clawsats-wallet brain run');
       console.log('');
       if (config?.identityKey) {
@@ -1432,6 +1636,9 @@ brain
       console.log(`  autoHireCapabilities:     ${policy.decisions.autoHireCapabilities.join(', ')}`);
       console.log(`  maxJobsPerSweep:          ${policy.decisions.maxJobsPerSweep}`);
       console.log(`  requireMemoryApproval:    ${policy.decisions.requireHumanApprovalForMemory}`);
+      console.log(`  autoGenerateJobs:         ${policy.goals.autoGenerateJobs}`);
+      console.log(`  generateJobsEverySeconds: ${policy.goals.generateJobsEverySeconds}`);
+      console.log(`  goalTemplates:            ${policy.goals.templates.length}`);
     } catch (error) {
       console.error('❌ Failed to show brain help:', error instanceof Error ? error.message : String(error));
       process.exit(1);
@@ -1489,6 +1696,7 @@ brain
       console.log(`  Jobs pending:    ${pendingJobs}`);
       console.log(`  Jobs failed:     ${failedJobs}`);
       console.log(`  Needs approval:  ${approvalJobs}`);
+      console.log(`  Goal jobs:       ${policy.goals.autoGenerateJobs} (${policy.goals.templates.length} templates)`);
       console.log(`  Peer target:     ${policy.growth.targetKnownPeers}`);
       console.log(`  Auto-invite:     ${policy.timers.autoInviteOnDiscovery}`);
       console.log(`  Auto-register:   ${policy.timers.directoryRegisterEnabled}`);
@@ -1524,6 +1732,7 @@ brain
         : [];
       const peers = Array.isArray(watchPeers?.peers) ? watchPeers.peers : [];
       const pendingJobs = jobStore.list('pending').length;
+      const failedJobs = jobStore.list('failed').length;
       const approvalJobs = jobStore.list('needs_approval').length;
 
       let serverOnline = false;
@@ -1560,10 +1769,18 @@ brain
         recommendations.push('Queue work for delegation: `npx clawsats-wallet brain enqueue --capability dns_resolve --params \'{"hostname":"clawsats.com","type":"A"}\'`.');
       }
 
+      if (failedJobs > 0) {
+        recommendations.push(`Retry failed jobs: ` + '`npx clawsats-wallet brain retry-failed`' + ` (${failedJobs} failed).`);
+      }
+
       if (policy.decisions.hireEnabled) {
         recommendations.push(`Use ` + '`hireClaw`' + ` for tasks above local confidence; keep each hire <= ${policy.decisions.autoHireMaxSats} sats.`);
       } else {
         recommendations.push('Enable hiring in policy when you are ready to delegate tasks (`brain policy --set decisions.hireEnabled=true`).');
+      }
+
+      if (!policy.goals.autoGenerateJobs) {
+        recommendations.push('Enable policy initiative: `npx clawsats-wallet brain policy --set goals.autoGenerateJobs=true`.');
       }
 
       recommendations.push('Review decision logs any time: `npx clawsats-wallet brain why --limit 20`.');
@@ -1736,6 +1953,60 @@ brain
   });
 
 brain
+  .command('retry-failed')
+  .description('Requeue failed jobs as pending so they can run again')
+  .option('--id <jobId>', 'Retry one specific failed job ID')
+  .option('--capability <name>', 'Retry failed jobs for one capability')
+  .option('--limit <n>', 'Maximum failed jobs to requeue', '50')
+  .action((options) => {
+    try {
+      const dataDir = join(process.cwd(), 'data');
+      const jobs = new BrainJobStore(dataDir);
+      const brain = new ClawBrain(dataDir);
+      const limit = Math.max(1, parseInt(options.limit, 10) || 50);
+      const idFilter = typeof options.id === 'string' ? options.id.trim() : '';
+      const capabilityFilter = typeof options.capability === 'string' ? options.capability.trim() : '';
+      let candidates = jobs.list('failed');
+
+      if (idFilter) {
+        candidates = candidates.filter(job => job.id === idFilter);
+      }
+      if (capabilityFilter) {
+        candidates = candidates.filter(job => job.capability === capabilityFilter);
+      }
+
+      const selected = candidates.slice(0, limit);
+      if (selected.length === 0) {
+        console.log('No failed jobs matched your filters.');
+        return;
+      }
+
+      for (const job of selected) {
+        job.status = 'pending';
+        job.error = undefined;
+        job.audit.push({
+          ts: new Date().toISOString(),
+          action: 'retried',
+          reason: 'Operator requeued failed job'
+        });
+        jobs.update(job);
+        brain.logEvent({
+          source: 'brain.retry-failed',
+          action: 'job-retried',
+          reason: `Requeued failed job ${job.id}`,
+          details: { capability: job.capability, attempts: job.attempts }
+        });
+      }
+
+      console.log(`✅ Requeued failed jobs: ${selected.length}`);
+      console.log(`  queue: ${jobs.getQueuePath()}`);
+    } catch (error) {
+      console.error('❌ Failed to retry jobs:', error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
+
+brain
   .command('run')
   .description('Run the Phase 2 task router once against queued jobs')
   .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
@@ -1763,6 +2034,7 @@ brain
       const maxJobs = options.maxJobs
         ? Math.max(1, parseInt(options.maxJobs, 10))
         : Math.max(1, policy.decisions.maxJobsPerSweep || 1);
+      const goalSummary = enqueueGoalJobsFromPolicy('brain.run', policy, brain, jobs);
 
       const summary = await executeBrainJobs({
         source: 'brain.run',
@@ -1774,10 +2046,14 @@ brain
         jobs,
         wallet,
         identityKey: config.identityKey,
-        peers
+        peers,
+        localEndpoint: config.endpoints?.jsonrpc
       });
 
       console.log('✅ Brain run complete');
+      if (goalSummary.generated > 0) {
+        console.log(`  goals queued:      ${goalSummary.generated}`);
+      }
       console.log(`  processed:         ${summary.processed}`);
       console.log(`  completed:         ${summary.completed}`);
       console.log(`  failed:            ${summary.failed}`);

@@ -356,12 +356,18 @@ npx clawsats-wallet brain policy --set decisions.autoHireMaxSats=75
 # Phase 2 task router (queue -> route -> execute -> audit)
 npx clawsats-wallet brain enqueue --capability dns_resolve --params '{"hostname":"clawsats.com","type":"A"}'
 npx clawsats-wallet brain jobs
+npx clawsats-wallet brain retry-failed
 npx clawsats-wallet brain run
 npx clawsats-wallet brain run --allow-memory-write
+
+# Optional initiative mode (policy-generated jobs)
+npx clawsats-wallet brain policy --set goals.autoGenerateJobs=true
+npx clawsats-wallet brain policy --set goals.generateJobsEverySeconds=300
 ```
 
 Policy is stored at `data/brain-policy.json` and is designed safe-by-default.
 Job queue is stored at `data/brain-jobs.json`.
+When `goals.autoGenerateJobs=true`, watch/runs can auto-enqueue jobs from policy templates.
 
 ## Architecture
 
@@ -529,6 +535,7 @@ const result = await PaymentHelper.payForCapability(
 | `brain policy` | Show/update initiative policy (`data/brain-policy.json`) |
 | `brain enqueue` | Queue work for Phase 2 task routing |
 | `brain jobs` | List queued/completed/failed jobs |
+| `brain retry-failed` | Requeue failed jobs back to pending |
 | `brain run` | Execute queued jobs now |
 | `health` | Check wallet server health |
 | `config` | Show wallet configuration |

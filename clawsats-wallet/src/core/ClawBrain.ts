@@ -21,6 +21,25 @@ export interface BrainPolicy {
     minHealthyPeers: number;
     targetKnownPeers: number;
   };
+  goals: {
+    autoGenerateJobs: boolean;
+    generateJobsEverySeconds: number;
+    defaultStrategy: 'auto' | 'hire' | 'local';
+    defaultMaxSats: number;
+    defaultPriority: number;
+    templates: Array<{
+      enabled: boolean;
+      capability: string;
+      params?: Record<string, unknown>;
+      strategy?: 'auto' | 'hire' | 'local';
+      maxSats?: number;
+      priority?: number;
+      persistResult?: boolean;
+      memoryKey?: string;
+      memoryCategory?: string;
+      everySeconds?: number;
+    }>;
+  };
 }
 
 export interface BrainEvent {
@@ -50,6 +69,26 @@ const DEFAULT_POLICY: BrainPolicy = {
   growth: {
     minHealthyPeers: 3,
     targetKnownPeers: 12
+  },
+  goals: {
+    autoGenerateJobs: false,
+    generateJobsEverySeconds: 300,
+    defaultStrategy: 'auto',
+    defaultMaxSats: 25,
+    defaultPriority: 80,
+    templates: [
+      {
+        enabled: true,
+        capability: 'dns_resolve',
+        params: { hostname: 'clawsats.com', type: 'A' },
+        strategy: 'auto',
+        maxSats: 8,
+        priority: 90,
+        persistResult: false,
+        memoryCategory: 'goal-result',
+        everySeconds: 900
+      }
+    ]
   }
 };
 

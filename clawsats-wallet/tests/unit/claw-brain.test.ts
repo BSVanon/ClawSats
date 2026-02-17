@@ -18,6 +18,8 @@ describe('ClawBrain', () => {
 
     expect(policy.version).toBe(1);
     expect(policy.timers.discoveryIntervalSeconds).toBe(60);
+    expect(policy.goals.autoGenerateJobs).toBe(false);
+    expect(Array.isArray(policy.goals.templates)).toBe(true);
     expect(existsSync(brain.getPolicyPath())).toBe(true);
   });
 
