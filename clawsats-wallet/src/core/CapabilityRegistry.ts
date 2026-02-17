@@ -70,7 +70,7 @@ export class CapabilityRegistry {
         try {
           const result = await wallet.createSignature({
             data: Array.from(Buffer.from(payload, 'utf8')),
-            protocolID: [0, 'clawsats-echo'],
+            protocolID: [0, 'clawsats echo'],
             keyID: 'echo-v1'
           });
           signature = Buffer.from(result.signature).toString('base64');
@@ -110,7 +110,7 @@ export class CapabilityRegistry {
         try {
           const result = await wallet.createSignature({
             data,
-            protocolID: [0, 'clawsats-sign'],
+            protocolID: [0, 'clawsats sign'],
             keyID: 'sign-v1'
           });
           signature = Buffer.from(result.signature).toString('base64');
@@ -146,7 +146,7 @@ export class CapabilityRegistry {
         try {
           const result = await wallet.createSignature({
             data: Array.from(Buffer.from(hash, 'utf8')),
-            protocolID: [0, 'clawsats-hash'],
+            protocolID: [0, 'clawsats hash'],
             keyID: 'hash-v1'
           });
           signature = Buffer.from(result.signature).toString('base64');
@@ -184,7 +184,7 @@ export class CapabilityRegistry {
         try {
           const result = await wallet.createSignature({
             data: Array.from(Buffer.from(attestation, 'utf8')),
-            protocolID: [0, 'clawsats-timestamp'],
+            protocolID: [0, 'clawsats timestamp'],
             keyID: 'ts-v1'
           });
           signature = Buffer.from(result.signature).toString('base64');
@@ -333,7 +333,7 @@ export class CapabilityRegistry {
         try {
           const result = await wallet.createSignature({
             data: Array.from(Buffer.from(contentHash, 'utf8')),
-            protocolID: [0, 'clawsats-fetch'],
+            protocolID: [0, 'clawsats fetch'],
             keyID: 'fetch-v1'
           });
           signature = Buffer.from(result.signature).toString('base64');
@@ -437,9 +437,8 @@ export class CapabilityRegistry {
           const result = await wallet.verifySignature({
             data: Array.from(Buffer.from(canonicalJson(data), 'utf8')),
             signature: Array.from(Buffer.from(signature, 'base64')),
-            protocolID: [0, 'clawsats-receipt'],
-            keyID: 'receipt-v1',
-            counterparty: data.provider
+            protocolID: [0, 'clawsats receipt'],
+            keyID: 'receipt-v1'
           });
           return {
             valid: result.valid === true,

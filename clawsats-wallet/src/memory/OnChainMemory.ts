@@ -141,7 +141,7 @@ export class OnChainMemory {
       try {
         const encResult = await wallet.encrypt({
           plaintext: Array.from(data),
-          protocolID: [0, 'clawsats-memory'],
+          protocolID: [0, 'clawsats memory'],
           keyID: key,
           counterparty: 'self'
         });
@@ -174,10 +174,10 @@ export class OnChainMemory {
           lockingScript: script.toString('hex'),
           satoshis: 0,
           outputDescription: `Memory: ${key}`,
-          tags: ['clawsats-memory', category],
+          tags: ['clawsats memory', category],
           basket: 'clawsats-memories'
         }],
-        labels: ['clawsats-memory'],
+        labels: ['clawsats memory'],
         options: {
           acceptDelayedBroadcast: false
         }
@@ -419,10 +419,10 @@ export class OnChainMemory {
         lockingScript: script.toString('hex'),
         satoshis: 0,
         outputDescription: 'CLAWMEM_V1 master index',
-        tags: ['clawsats-memory', 'master-index'],
+        tags: ['clawsats memory', 'master-index'],
         basket: 'clawsats-memories'
       }],
-      labels: ['clawsats-memory', 'clawsats-master-index'],
+      labels: ['clawsats memory', 'clawsats-master-index'],
       options: { acceptDelayedBroadcast: false }
     });
 

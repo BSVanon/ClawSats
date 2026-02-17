@@ -444,6 +444,14 @@ export class JsonRpcServer {
           res.status(400).json({ error: `Invalid invitation: ${validation.reason}` });
           return;
         }
+        if (!invitation.recipient?.publicKey) {
+          res.status(400).json({ error: 'Invitation missing recipient identity key. Upgrade sender wallet and retry.' });
+          return;
+        }
+        if (invitation.recipient.publicKey !== config.identityKey) {
+          res.status(400).json({ error: 'Invitation is not addressed to this identity key' });
+          return;
+        }
 
         // Nonce replay protection
         if (invitation.nonce && !this.nonceCache.check(invitation.nonce)) {
@@ -462,7 +470,7 @@ export class JsonRpcServer {
           const result = await wallet.verifySignature({
             data: Array.from(Buffer.from(payload, 'utf8')),
             signature: Array.from(Buffer.from(signature, 'base64')),
-            protocolID: [0, 'clawsats-sharing'],
+            protocolID: [0, 'clawsats sharing'],
             keyID: 'sharing-v1',
             counterparty: invitation.sender.identityKey
           });
@@ -496,7 +504,9 @@ export class JsonRpcServer {
         this.peerRegistry.addPeer(peer);
 
         // Respond with our capability announcement
-        const announcement = await sharing.createAnnouncement();
+        const announcement = await sharing.createAnnouncement({
+          recipientIdentityKey: invitation.sender.identityKey
+        });
         log(TAG, `Accepted invitation from ${invitation.sender.identityKey.substring(0, 12)}...`);
 
         res.json({
@@ -534,26 +544,37 @@ export class JsonRpcServer {
           return;
         }
         let verified = false;
-        try {
-          const wallet = this.walletManager.getWallet();
-          const { signature, ...rest } = announcement;
-          const payload = canonicalJson(rest);
-          const result = await wallet.verifySignature({
-            data: Array.from(Buffer.from(payload, 'utf8')),
-            signature: Array.from(Buffer.from(signature, 'base64')),
-            protocolID: [0, 'clawsats-sharing'],
-            keyID: 'sharing-v1',
-            counterparty: announcement.identityKey
-          });
-          verified = result.valid === true;
-          if (!verified) {
-            logWarn(TAG, `Announcement signature REJECTED from ${announcement.identityKey.substring(0, 12)}...`);
-            res.status(403).json({ error: 'Invalid announcement signature' });
-            return;
+        const wallet = this.walletManager.getWallet();
+        const { signature, ...rest } = announcement;
+        const payload = canonicalJson(rest);
+        const verifyArgsBase = {
+          data: Array.from(Buffer.from(payload, 'utf8')),
+          signature: Array.from(Buffer.from(signature, 'base64')),
+          protocolID: [0, 'clawsats sharing'] as [0, string],
+          keyID: 'sharing-v1'
+        };
+        const verifyAttempts: Array<{ counterparty?: string }> = [
+          { counterparty: announcement.identityKey },
+          {}
+        ];
+        for (const attempt of verifyAttempts) {
+          try {
+            const args: any = { ...verifyArgsBase };
+            if (attempt.counterparty) {
+              args.counterparty = attempt.counterparty;
+            }
+            const result = await wallet.verifySignature(args);
+            if (result.valid === true) {
+              verified = true;
+              break;
+            }
+          } catch {
+            // Try next verification mode.
           }
-        } catch {
-          logWarn(TAG, `Announcement signature verification error from ${announcement.identityKey.substring(0, 12)}...`);
-          res.status(403).json({ error: 'Signature verification failed' });
+        }
+        if (!verified) {
+          logWarn(TAG, `Announcement signature REJECTED from ${announcement.identityKey.substring(0, 12)}...`);
+          res.status(403).json({ error: 'Invalid announcement signature' });
           return;
         }
 
@@ -897,7 +918,7 @@ export class JsonRpcServer {
         try {
           const sigResult = await wallet.createSignature({
             data: Array.from(Buffer.from(canonicalJson(receiptData), 'utf8')),
-            protocolID: [0, 'clawsats-receipt'],
+            protocolID: [0, 'clawsats receipt'],
             keyID: 'receipt-v1'
           });
           receiptSignature = Buffer.from(sigResult.signature).toString('base64');
@@ -1043,10 +1064,23 @@ export class JsonRpcServer {
       const config = this.walletManager.getConfig();
       if (!config) throw new Error('Wallet not initialized');
 
+      const discoveryRes = await fetch(`${endpoint}/discovery`, {
+        signal: AbortSignal.timeout(10000)
+      });
+      if (!discoveryRes.ok) {
+        throw new Error(`Recipient discovery failed (${discoveryRes.status})`);
+      }
+      const discovery: any = await discoveryRes.json();
+      const recipientIdentityKey = String(discovery?.identityKey || '');
+      if (!/^(02|03)[0-9a-fA-F]{64}$/.test(recipientIdentityKey)) {
+        throw new Error('Recipient discovery response did not include a valid identityKey');
+      }
+
       const wallet = this.walletManager.getWallet();
       const sharing = new SharingProtocol(config, wallet);
-      const invitation = await sharing.createInvitation(`claw://${endpoint}`, {
-        recipientEndpoint: endpoint
+      const invitation = await sharing.createInvitation(`claw://${recipientIdentityKey.substring(0, 16)}`, {
+        recipientEndpoint: endpoint,
+        recipientIdentityKey
       });
 
       const res = await fetch(`${endpoint}/wallet/invite`, {
@@ -1291,9 +1325,8 @@ export class JsonRpcServer {
         const result = await wallet.verifySignature({
           data: Array.from(Buffer.from(canonicalJson(data), 'utf8')),
           signature: Array.from(Buffer.from(signature, 'base64')),
-          protocolID: [0, 'clawsats-receipt'],
-          keyID: 'receipt-v1',
-          counterparty: receipt.provider
+          protocolID: [0, 'clawsats receipt'],
+          keyID: 'receipt-v1'
         });
         return {
           valid: result.valid === true,

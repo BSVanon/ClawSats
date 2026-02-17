@@ -297,7 +297,7 @@ export function createBsvMentorCapability(config: BsvMentorConfig): CapabilityHa
           const answerHash = createHash('sha256').update(answer).digest('hex');
           const sigResult = await config.wallet.createSignature({
             data: Array.from(Buffer.from(answerHash, 'utf8')),
-            protocolID: [0, 'clawsats-mentor'],
+            protocolID: [0, 'clawsats mentor'],
             keyID: 'mentor-v1'
           });
           signature = Buffer.from(sigResult.signature).toString('base64');

@@ -619,8 +619,10 @@ curl http://YOUR_VPS_IP:3321/discovery
 
 # From another Claw:
 npx clawsats-wallet discover http://YOUR_VPS_IP:3321
-npx clawsats-wallet share -r http://YOUR_VPS_IP:3321
+npx clawsats-wallet share -r http://REAL_PEER_IP:3321
 ```
+
+`share -r` must target a real peer endpoint (not a placeholder). The CLI now resolves the recipient identity from `/discovery` and signs invitations specifically for that peer.
 
 #### VPS Recommendations
 

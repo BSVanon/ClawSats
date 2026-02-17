@@ -170,8 +170,37 @@ program
       const config = walletManager.getConfig()!;
       const wallet = walletManager.getWallet();
       const sharing = new SharingProtocol(config, wallet);
-      const invitation = await sharing.createInvitation(options.recipient);
       const isHttpRecipient = options.recipient.startsWith('http://') || options.recipient.startsWith('https://');
+
+      let recipientIdentityKey: string | undefined;
+      if (isHttpRecipient) {
+        console.log(`🔍 Resolving recipient identity from ${options.recipient}/discovery ...`);
+        const discRes = await fetch(`${options.recipient}/discovery`, {
+          signal: AbortSignal.timeout(10000)
+        });
+        if (!discRes.ok) {
+          throw new Error(`Recipient discovery failed: HTTP ${discRes.status}`);
+        }
+        const info: any = await discRes.json();
+        if (!info?.identityKey || !/^(02|03)[0-9a-fA-F]{64}$/.test(info.identityKey)) {
+          throw new Error('Recipient discovery response is missing a valid identityKey');
+        }
+        recipientIdentityKey = info.identityKey;
+      }
+
+      const recipientClawId = recipientIdentityKey
+        ? `claw://${recipientIdentityKey.substring(0, 16)}`
+        : options.recipient;
+
+      const invitation = await sharing.createInvitation(recipientClawId, {
+        recipientEndpoint: isHttpRecipient ? options.recipient : undefined,
+        recipientIdentityKey
+      });
+
+      if (!invitation.signature) {
+        console.error('❌ Failed to sign invitation. Ensure wallet signing is available and try again.');
+        process.exit(1);
+      }
 
       console.log(`📨 Invitation created: ${invitation.invitationId}`);
 
@@ -604,8 +633,9 @@ program
 
               // Auto-invite: send our invitation so they know about us too
               try {
-                const invitation = await sharing.createInvitation(`claw://${advertisedEndpoint}`, {
-                  recipientEndpoint: advertisedEndpoint
+                const invitation = await sharing.createInvitation(`claw://${info.identityKey.substring(0, 16)}`, {
+                  recipientEndpoint: advertisedEndpoint,
+                  recipientIdentityKey: info.identityKey
                 });
                 const invRes = await fetch(`${advertisedEndpoint}/wallet/invite`, {
                   method: 'POST',

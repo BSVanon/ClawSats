@@ -25,20 +25,27 @@ export class SharingProtocol {
 
   /**
    * Sign a payload using the wallet's identity key.
-   * Returns base64 signature or empty string if wallet unavailable.
+   * Returns base64 signature.
    */
-  async signPayload(payload: string): Promise<string> {
-    if (!this.wallet) return '';
-    try {
-      const result = await this.wallet.createSignature({
-        data: Array.from(Buffer.from(payload, 'utf8')),
-        protocolID: [0, 'clawsats-sharing'],
-        keyID: 'sharing-v1'
-      });
-      return Buffer.from(result.signature).toString('base64');
-    } catch {
-      return '';
+  async signPayload(payload: string, counterparty?: string): Promise<string> {
+    if (!this.wallet) {
+      throw new Error('Wallet unavailable for signing');
     }
+
+    const args: any = {
+      data: Array.from(Buffer.from(payload, 'utf8')),
+      protocolID: [0, 'clawsats sharing'],
+      keyID: 'sharing-v1'
+    };
+    if (counterparty) {
+      args.counterparty = counterparty;
+    }
+
+    const result = await this.wallet.createSignature(args);
+    if (!result?.signature || result.signature.length === 0) {
+      throw new Error('Wallet returned empty signature');
+    }
+    return Buffer.from(result.signature).toString('base64');
   }
 
   /**
@@ -50,12 +57,14 @@ export class SharingProtocol {
     autoDeployScript?: string;
     message?: string;
     recipientEndpoint?: string;
+    recipientIdentityKey?: string;
   } = {}): Promise<Invitation> {
     const {
       capabilities = this.config.capabilities,
       expiresInMs = INVITE_TTL_MS,
       autoDeployScript = 'https://raw.githubusercontent.com/BSVanon/ClawSats/main/clawsats-wallet/scripts/auto-deploy.sh',
-      recipientEndpoint
+      recipientEndpoint,
+      recipientIdentityKey
     } = options;
 
     const nonce = randomBytes(16).toString('hex');
@@ -73,7 +82,8 @@ export class SharingProtocol {
       },
       recipient: {
         clawId: recipientClawId,
-        endpoint: recipientEndpoint
+        endpoint: recipientEndpoint,
+        publicKey: recipientIdentityKey
       },
       walletConfig: {
         chain: this.config.chain,
@@ -92,7 +102,10 @@ export class SharingProtocol {
     };
 
     // Sign the invitation if wallet is available
-    invitation.signature = await this.signPayload(this.serializeForSigning(invitation));
+    invitation.signature = await this.signPayload(
+      this.serializeForSigning(invitation),
+      recipientIdentityKey
+    );
 
     return invitation;
   }
@@ -104,11 +117,13 @@ export class SharingProtocol {
     overlayTopics?: string[];
     rateLimit?: string;
     costPerCall?: number;
+    recipientIdentityKey?: string;
   } = {}): Promise<CapabilityAnnouncement> {
     const {
       overlayTopics = ['clawsats-wallets', 'bsv-payments'],
       rateLimit = '100/day',
-      costPerCall = 0
+      costPerCall = 0,
+      recipientIdentityKey
     } = options;
 
     const announcement: CapabilityAnnouncement = {
@@ -133,7 +148,10 @@ export class SharingProtocol {
       timestamp: new Date().toISOString()
     };
 
-    announcement.signature = await this.signPayload(this.serializeForSigning(announcement));
+    announcement.signature = await this.signPayload(
+      this.serializeForSigning(announcement),
+      recipientIdentityKey
+    );
     return announcement;
   }
 
