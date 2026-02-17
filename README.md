@@ -352,9 +352,16 @@ npx clawsats-wallet brain why --limit 20
 npx clawsats-wallet brain policy
 npx clawsats-wallet brain policy --set timers.autoInviteOnDiscovery=false
 npx clawsats-wallet brain policy --set decisions.autoHireMaxSats=75
+
+# Phase 2 task router (queue -> route -> execute -> audit)
+npx clawsats-wallet brain enqueue --capability dns_resolve --params '{"hostname":"clawsats.com","type":"A"}'
+npx clawsats-wallet brain jobs
+npx clawsats-wallet brain run
+npx clawsats-wallet brain run --allow-memory-write
 ```
 
 Policy is stored at `data/brain-policy.json` and is designed safe-by-default.
+Job queue is stored at `data/brain-jobs.json`.
 
 ## Architecture
 
@@ -369,7 +376,8 @@ clawsats-wallet/
 │   │   ├── PaymentHelper.ts  # Client-side BRC-105 payment builder (payForCapability)
 │   │   ├── NonceCache.ts     # Sliding-window nonce cache for invite replay protection
 │   │   ├── RateLimiter.ts    # Per-sender sliding-window rate limiter
-│   │   └── ClawBrain.ts      # Initiative policy + decision logging
+│   │   ├── ClawBrain.ts      # Initiative policy + decision logging
+│   │   └── BrainJobs.ts      # Phase 2 queued task routing state
 │   ├── server/
 │   │   └── JsonRpcServer.ts  # Express + JSON-RPC 2.0 + /wallet/invite + /call/:cap 402
 │   ├── cli/
@@ -388,7 +396,8 @@ clawsats-wallet/
 ├── scripts/
 │   ├── auto-deploy.sh        # Production systemd deployment script
 │   ├── openclaw-api-key.sh   # Persistent API key helper for openclaw.service
-│   └── openclaw-autopilot.sh # Installs/starts openclaw-watch service
+│   ├── openclaw-autopilot.sh # Installs/starts openclaw-watch service
+│   └── openclaw-update.sh    # Pull latest code + rebuild + restart services
 ├── courses/                  # Static JSON course files (filled by content AI)
 ├── public/                   # Static HTML (scholarships page, etc.)
 ├── tests/                    # 79+ unit tests (jest + ts-jest)
@@ -518,6 +527,9 @@ const result = await PaymentHelper.payForCapability(
 | `brain what-next` | Top recommended actions to grow/earn safely |
 | `brain why` | Explain recent claw decisions from event log |
 | `brain policy` | Show/update initiative policy (`data/brain-policy.json`) |
+| `brain enqueue` | Queue work for Phase 2 task routing |
+| `brain jobs` | List queued/completed/failed jobs |
+| `brain run` | Execute queued jobs now |
 | `health` | Check wallet server health |
 | `config` | Show wallet configuration |
 

@@ -18,6 +18,8 @@ const TAG = 'payment';
  */
 export class PaymentHelper {
 
+  static readonly DEFAULT_TIMEOUT_MS = 30000;
+
   /**
    * Pay for and execute a remote capability in one call.
    * Handles the full 402 round-trip automatically.
@@ -32,8 +34,17 @@ export class PaymentHelper {
     wallet: any,
     endpoint: string,
     params: Record<string, any>,
-    senderIdentityKey: string
+    senderIdentityKey: string,
+    options?: {
+      maxTotalSats?: number;
+      timeoutMs?: number;
+    }
   ): Promise<any> {
+    const timeoutMs = Math.min(90000, Math.max(5000, Number(options?.timeoutMs || PaymentHelper.DEFAULT_TIMEOUT_MS)));
+    const maxTotalSats = Number.isFinite(Number(options?.maxTotalSats))
+      ? Math.max(0, Math.floor(Number(options?.maxTotalSats)))
+      : null;
+
     // Step 1: Call without payment to get 402 challenge
     log(TAG, `Requesting challenge from ${endpoint}...`);
     const challengeRes = await fetch(endpoint, {
@@ -43,7 +54,7 @@ export class PaymentHelper {
         'x-bsv-identity-key': senderIdentityKey
       },
       body: JSON.stringify(params),
-      signal: AbortSignal.timeout(15000)
+      signal: AbortSignal.timeout(timeoutMs)
     });
 
     if (challengeRes.status !== 402) {
@@ -70,6 +81,9 @@ export class PaymentHelper {
     }
     if (satoshisRequired <= 0) {
       throw new Error('402 response has invalid satoshis-required');
+    }
+    if (maxTotalSats !== null && satoshisRequired + feeSats > maxTotalSats) {
+      throw new Error(`Challenge requires ${satoshisRequired + feeSats} sats, above maxTotalSats=${maxTotalSats}.`);
     }
 
     // Verify the fee key matches the canonical protocol key
@@ -147,7 +161,7 @@ export class PaymentHelper {
         'x-bsv-payment': paymentHeader
       },
       body: JSON.stringify(params),
-      signal: AbortSignal.timeout(30000)
+      signal: AbortSignal.timeout(timeoutMs)
     });
 
     if (!resultRes.ok) {

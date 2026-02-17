@@ -14,6 +14,8 @@ export interface BrainPolicy {
     autoHireMaxSats: number;
     writeMemoryEnabled: boolean;
     requireHumanApprovalForMemory: boolean;
+    autoHireCapabilities: string[];
+    maxJobsPerSweep: number;
   };
   growth: {
     minHealthyPeers: number;
@@ -41,7 +43,9 @@ const DEFAULT_POLICY: BrainPolicy = {
     hireEnabled: true,
     autoHireMaxSats: 50,
     writeMemoryEnabled: true,
-    requireHumanApprovalForMemory: true
+    requireHumanApprovalForMemory: true,
+    autoHireCapabilities: ['dns_resolve', 'fetch_url', 'peer_health_check', 'verify_receipt', 'bsv_mentor'],
+    maxJobsPerSweep: 2
   },
   growth: {
     minHealthyPeers: 3,

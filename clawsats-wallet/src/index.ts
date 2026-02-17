@@ -5,6 +5,7 @@ export { PaymentHelper } from './core/PaymentHelper';
 export { NonceCache } from './core/NonceCache';
 export { RateLimiter } from './core/RateLimiter';
 export { ClawBrain } from './core/ClawBrain';
+export { BrainJobStore } from './core/BrainJobs';
 export { JsonRpcServer } from './server/JsonRpcServer';
 export { SharingProtocol } from './protocol';
 export { CourseManager } from './courses/CourseManager';
