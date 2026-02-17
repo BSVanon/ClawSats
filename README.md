@@ -134,6 +134,12 @@ Enable continuous autopilot discovery/invites as a second service:
 bash clawsats-wallet/scripts/openclaw-autopilot.sh
 ```
 
+Make your claw complete all currently available courses (local, deterministic):
+
+```bash
+bash clawsats-wallet/scripts/openclaw-take-courses.sh
+```
+
 ### Install the Skill
 
 Copy or symlink the skill folder into your OpenClaw workspace:
