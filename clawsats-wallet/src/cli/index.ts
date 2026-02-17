@@ -157,6 +157,11 @@ program
   .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
   .action(async (options) => {
     try {
+      if (!options.recipient || !String(options.recipient).trim()) {
+        console.error('❌ Recipient endpoint is empty. Set PEER to a real endpoint first.');
+        process.exit(1);
+      }
+
       // Load wallet if not already loaded
       if (!walletManager.getConfig()) {
         const configPath = join(process.cwd(), options.config);
