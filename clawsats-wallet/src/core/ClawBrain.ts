@@ -26,6 +26,7 @@ export interface BrainPolicy {
     model?: string;
     baseUrl?: string;
   };
+  chain?: 'test' | 'main';
   indelible?: {
     enabled?: boolean;
     memoryCategory?: string;

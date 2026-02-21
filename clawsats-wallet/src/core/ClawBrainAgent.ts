@@ -129,6 +129,7 @@ export class ClawBrainAgent {
   private walletRpc: (method: string, params: Record<string, unknown>) => Promise<unknown>;
   private circuitBreakers: Map<string, CircuitState> = new Map();
   private modelFailures: number = 0;
+  private executedKeys: Set<string> = new Set();
 
   constructor(
     brain: ClawBrain,
@@ -159,6 +160,32 @@ export class ClawBrainAgent {
     // 1. Load context
     const policy = this.brain.loadPolicy();
     const indelibleCfg = policy.indelible || { enabled: false };
+
+    // 1a. Chain guard — block if policy.chain mismatches wallet chain
+    if (policy.chain) {
+      try {
+        const walletConfig = await this.walletRpc('getConfig', {}) as any;
+        const walletChain = walletConfig?.chain;
+        if (walletChain && walletChain !== policy.chain) {
+          this.brain.logEvent({
+            source: TAG,
+            action: 'chain-guard-block',
+            reason: `Policy chain "${policy.chain}" does not match wallet chain "${walletChain}"`,
+            details: { cycleId, policyChain: policy.chain, walletChain }
+          });
+          const result: ThinkResult = {
+            cycleId, promptVersion: PROMPT_VERSION,
+            decision: { reasoning: `Chain mismatch: policy="${policy.chain}" wallet="${walletChain}"`, actions: [], confidence: 0, summary: 'Blocked — chain mismatch' },
+            executedActions: [], queuedActions: [],
+            exitCode: 2, dryRun: options.dryRun, timestamp
+          };
+          return result;
+        }
+      } catch (e: any) {
+        logWarn(TAG, `Chain guard check failed: ${e.message}`);
+      }
+    }
+
     const recentEvents = this.brain.listEvents(options.eventsLimit);
     const pendingJobs = this.jobStore.nextPending(5);
 
@@ -182,9 +209,12 @@ export class ClawBrainAgent {
         const category = indelibleCfg.memoryCategory || 'brain-cycle';
         const limit = indelibleCfg.maxCycleHistory || 5;
         const memories = await this.walletRpc('searchMemories', { query: category });
-        if (Array.isArray(memories)) {
-          memoryContext = memories.slice(-limit);
-        }
+        const raw = memories as any;
+        const list = Array.isArray(raw) ? raw
+          : Array.isArray(raw?.memories) ? raw.memories
+          : Array.isArray(raw?.results) ? raw.results
+          : [];
+        memoryContext = list.slice(-limit);
         log(TAG, `Loaded ${memoryContext.length} past cycle memories`);
       } catch (e: any) {
         logWarn(TAG, `Failed to load Indelible memory: ${e.message}`);
@@ -306,6 +336,12 @@ export class ClawBrainAgent {
     for (const action of actions) {
       const idempotencyKey = `${cycleId}-${action.name}-${hashJson(action.arguments)}`;
 
+      // Check idempotency — skip if already executed
+      if (this.executedKeys.has(idempotencyKey)) {
+        log(TAG, `Skipping duplicate action: ${action.name} (key: ${idempotencyKey})`);
+        continue;
+      }
+
       // Check allowlist
       if (!ALLOWED_TOOLS.has(action.name)) {
         queuedActions.push({
@@ -379,23 +415,37 @@ export class ClawBrainAgent {
         continue;
       }
 
-      // Execute
-      try {
-        const result = await this.walletRpc(action.name, action.arguments);
-        executedActions.push({
-          name: action.name, arguments: action.arguments,
-          idempotencyKey, status: 'executed',
-          result: redactSecrets(result),
-          resultHash: hashJson(result)
-        });
-        // Reset circuit on success
-        this.circuitBreakers.delete(action.name);
-      } catch (e: any) {
+      // Execute with 1 retry + 2s backoff
+      let lastError: string = '';
+      let succeeded = false;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        if (attempt > 0) {
+          await new Promise(r => setTimeout(r, 2000));
+          log(TAG, `Retrying ${action.name} (attempt ${attempt + 1}/2)`);
+        }
+        try {
+          const result = await this.walletRpc(action.name, action.arguments);
+          executedActions.push({
+            name: action.name, arguments: action.arguments,
+            idempotencyKey, status: 'executed',
+            result: redactSecrets(result),
+            resultHash: hashJson(result)
+          });
+          this.executedKeys.add(idempotencyKey);
+          this.circuitBreakers.delete(action.name);
+          succeeded = true;
+          break;
+        } catch (e: any) {
+          lastError = e.message;
+        }
+      }
+
+      if (!succeeded) {
         hasFailure = true;
         executedActions.push({
           name: action.name, arguments: action.arguments,
           idempotencyKey, status: 'failed',
-          error: e.message
+          error: lastError
         });
 
         // Update circuit breaker
@@ -424,10 +474,10 @@ export class ClawBrainAgent {
     // 8. Write audit
     this.logAudit(cycleId, result);
 
-    // 9. Save cycle summary to Indelible memory
-    if (indelibleCfg.enabled !== false && !options.dryRun) {
+    // 9. Save cycle summary to Indelible memory (agent-internal, not LLM-requested)
+    if (indelibleCfg.enabled === true && !options.dryRun) {
+      const summaryKey = `brain-cycle/${cycleId}`;
       try {
-        const summaryKey = `brain-cycle/${cycleId}`;
         await this.walletRpc('writeMemory', {
           key: summaryKey,
           data: JSON.stringify({
@@ -441,10 +491,31 @@ export class ClawBrainAgent {
           }),
           category: indelibleCfg.memoryCategory || 'brain-cycle'
         });
+        this.brain.logEvent({
+          source: TAG,
+          action: 'agent-internal-memory-write',
+          reason: `Cycle summary saved to Indelible (opt-in via policy.indelible.enabled)`,
+          details: { cycleId, key: summaryKey, category: indelibleCfg.memoryCategory || 'brain-cycle' }
+        });
         log(TAG, `Saved cycle summary to Indelible: ${summaryKey}`);
       } catch (e: any) {
         logWarn(TAG, `Failed to save cycle to Indelible: ${e.message}`);
+        this.brain.logEvent({
+          source: TAG,
+          action: 'agent-internal-memory-write',
+          reason: `Cycle summary save failed: ${e.message}`,
+          details: { cycleId, key: summaryKey, error: e.message }
+        });
       }
+    } else if (!options.dryRun) {
+      this.brain.logEvent({
+        source: TAG,
+        action: 'agent-internal-memory-write-skipped',
+        reason: indelibleCfg.enabled !== true
+          ? 'Indelible memory disabled in policy (indelible.enabled !== true)'
+          : 'Dry-run mode — no memory write',
+        details: { cycleId }
+      });
     }
 
     return result;

@@ -12,7 +12,7 @@ import { PaymentHelper } from '../core/PaymentHelper';
 import { OnChainMemory } from '../memory/OnChainMemory';
 import { CreateWalletOptions, ServeOptions } from '../types';
 import { existsSync, writeFileSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { join, isAbsolute } from 'path';
 
 const program = new Command();
 const walletManager = new WalletManager();
@@ -2071,7 +2071,7 @@ brain
   .command('think')
   .description('Run one LLM-driven decision cycle (dry-run by default)')
   .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
-  .option('--policy <path>', 'Path to brain policy file', 'data/brain-policy.json')
+  .option('--policy <path>', 'Path to brain policy file', 'brain-policy.json')
   .option('--dry-run', 'Decision only, no tool execution (default)', true)
   .option('--execute', 'Enable tool execution (disables dry-run)', false)
   .option('--provider <name>', 'LLM provider: claude, openai, ollama')
@@ -2081,7 +2081,7 @@ brain
   .option('--json', 'Machine-readable JSON output', false)
   .action(async (options) => {
     try {
-      const configPath = join(process.cwd(), options.config);
+      const configPath = isAbsolute(options.config) ? options.config : join(process.cwd(), options.config);
       if (!existsSync(configPath)) {
         throw new Error(`Config file not found: ${configPath}`);
       }
@@ -2092,7 +2092,8 @@ brain
       if (!config) throw new Error('Wallet config unavailable.');
 
       const dataDir = join(process.cwd(), 'data');
-      const brainInstance = new ClawBrain(dataDir, options.policy);
+      const policyPath = isAbsolute(options.policy) ? options.policy : join(dataDir, options.policy);
+      const brainInstance = new ClawBrain(dataDir, policyPath);
       const jobStore = new BrainJobStore(dataDir);
 
       // Build wallet RPC caller
