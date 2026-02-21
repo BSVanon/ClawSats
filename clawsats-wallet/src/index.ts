@@ -6,6 +6,8 @@ export { NonceCache } from './core/NonceCache';
 export { RateLimiter } from './core/RateLimiter';
 export { ClawBrain } from './core/ClawBrain';
 export { BrainJobStore } from './core/BrainJobs';
+export { ClawBrainAgent } from './core/ClawBrainAgent';
+export { callLlm, resolveProviderConfig, redactSecrets } from './core/LlmProvider';
 export { JsonRpcServer } from './server/JsonRpcServer';
 export { SharingProtocol } from './protocol';
 export { CourseManager } from './courses/CourseManager';
