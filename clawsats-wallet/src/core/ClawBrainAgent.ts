@@ -161,28 +161,42 @@ export class ClawBrainAgent {
     const policy = this.brain.loadPolicy();
     const indelibleCfg = policy.indelible || { enabled: false };
 
-    // 1a. Chain guard — block if policy.chain mismatches wallet chain
+    // 1a. Chain guard — block if policy.chain mismatches wallet chain (fail-closed)
     if (policy.chain) {
+      let chainBlocked = false;
+      let chainBlockReason = '';
+      let chainBlockDetails: Record<string, unknown> = { cycleId, policyChain: policy.chain };
       try {
         const walletConfig = await this.walletRpc('getConfig', {}) as any;
         const walletChain = walletConfig?.chain;
-        if (walletChain && walletChain !== policy.chain) {
-          this.brain.logEvent({
-            source: TAG,
-            action: 'chain-guard-block',
-            reason: `Policy chain "${policy.chain}" does not match wallet chain "${walletChain}"`,
-            details: { cycleId, policyChain: policy.chain, walletChain }
-          });
-          const result: ThinkResult = {
-            cycleId, promptVersion: PROMPT_VERSION,
-            decision: { reasoning: `Chain mismatch: policy="${policy.chain}" wallet="${walletChain}"`, actions: [], confidence: 0, summary: 'Blocked — chain mismatch' },
-            executedActions: [], queuedActions: [],
-            exitCode: 2, dryRun: options.dryRun, timestamp
-          };
-          return result;
+        if (!walletChain) {
+          chainBlocked = true;
+          chainBlockReason = `Policy requires chain "${policy.chain}" but wallet returned no chain value`;
+        } else if (walletChain !== policy.chain) {
+          chainBlocked = true;
+          chainBlockReason = `Policy chain "${policy.chain}" does not match wallet chain "${walletChain}"`;
+          chainBlockDetails.walletChain = walletChain;
         }
       } catch (e: any) {
-        logWarn(TAG, `Chain guard check failed: ${e.message}`);
+        chainBlocked = true;
+        chainBlockReason = `Chain guard check failed (fail-closed): ${e.message}`;
+        chainBlockDetails.error = e.message;
+      }
+      if (chainBlocked) {
+        this.brain.logEvent({
+          source: TAG,
+          action: 'chain-guard-block',
+          reason: chainBlockReason,
+          details: chainBlockDetails
+        });
+        const result: ThinkResult = {
+          cycleId, promptVersion: PROMPT_VERSION,
+          decision: { reasoning: chainBlockReason, actions: [], confidence: 0, summary: 'Blocked — chain guard' },
+          executedActions: [], queuedActions: [],
+          exitCode: 2, dryRun: options.dryRun, timestamp
+        };
+        this.logAudit(cycleId, result);
+        return result;
       }
     }
 
