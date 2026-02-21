@@ -5,13 +5,14 @@ import { WalletManager } from '../core/WalletManager';
 import { JsonRpcServer } from '../server/JsonRpcServer';
 import { ClawBrain, BrainPolicy } from '../core/ClawBrain';
 import { BrainJob, BrainJobStore, BrainJobStatus, BrainJobStrategy } from '../core/BrainJobs';
+import { ClawBrainAgent, ThinkOptions } from '../core/ClawBrainAgent';
 import { SharingProtocol } from '../protocol';
 import { BEACON_MAX_BYTES } from '../protocol/constants';
 import { PaymentHelper } from '../core/PaymentHelper';
 import { OnChainMemory } from '../memory/OnChainMemory';
 import { CreateWalletOptions, ServeOptions } from '../types';
 import { existsSync, writeFileSync, readFileSync } from 'fs';
-import { join } from 'path';
+import { join, isAbsolute } from 'path';
 
 const program = new Command();
 const walletManager = new WalletManager();
@@ -2061,6 +2062,121 @@ brain
       console.log(`  queue:             ${jobs.getQueuePath()}`);
     } catch (error) {
       console.error('❌ Failed to run task router:', error instanceof Error ? error.message : String(error));
+      process.exit(1);
+    }
+  });
+
+// Brain think — LLM-driven single-cycle decision engine
+brain
+  .command('think')
+  .description('Run one LLM-driven decision cycle (dry-run by default)')
+  .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
+  .option('--policy <path>', 'Path to brain policy file', 'brain-policy.json')
+  .option('--dry-run', 'Decision only, no tool execution (default)', true)
+  .option('--execute', 'Enable tool execution (disables dry-run)', false)
+  .option('--provider <name>', 'LLM provider: claude, openai, ollama')
+  .option('--model <id>', 'Model identifier for the provider')
+  .option('--max-tool-calls <n>', 'Max tool calls per cycle (default 5, max 10)', '5')
+  .option('--events-limit <n>', 'Recent events to include in context', '20')
+  .option('--json', 'Machine-readable JSON output', false)
+  .action(async (options) => {
+    try {
+      const configPath = isAbsolute(options.config) ? options.config : join(process.cwd(), options.config);
+      if (!existsSync(configPath)) {
+        throw new Error(`Config file not found: ${configPath}`);
+      }
+      if (!walletManager.getConfig()) {
+        await walletManager.loadWallet(configPath);
+      }
+      const config = walletManager.getConfig();
+      if (!config) throw new Error('Wallet config unavailable.');
+
+      const dataDir = join(process.cwd(), 'data');
+      const policyPath = isAbsolute(options.policy) ? options.policy : join(dataDir, options.policy);
+      const brainInstance = new ClawBrain(dataDir, policyPath);
+      const jobStore = new BrainJobStore(dataDir);
+
+      // Build wallet RPC caller
+      const walletRpc = async (method: string, params: Record<string, unknown>): Promise<unknown> => {
+        const endpoint = config.endpoints?.jsonrpc || 'http://localhost:3321';
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${process.env.CLAWSATS_API_KEY || ''}`
+          },
+          body: JSON.stringify({ jsonrpc: '2.0', id: Date.now(), method, params }),
+          signal: AbortSignal.timeout(30000)
+        });
+        if (!res.ok) throw new Error(`Wallet RPC ${res.status}`);
+        const json = await res.json() as any;
+        if (json.error) throw new Error(json.error.message || JSON.stringify(json.error));
+        return json.result;
+      };
+
+      const agent = new ClawBrainAgent(brainInstance, jobStore, walletRpc);
+
+      const thinkOptions: ThinkOptions = {
+        dryRun: options.execute !== true,
+        maxToolCalls: Math.min(10, Math.max(1, parseInt(options.maxToolCalls, 10) || 5)),
+        eventsLimit: Math.max(1, parseInt(options.eventsLimit, 10) || 20),
+        jsonOutput: options.json === true,
+        provider: options.provider,
+        model: options.model
+      };
+
+      const result = await agent.think(thinkOptions);
+
+      if (options.json) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        const mode = thinkOptions.dryRun ? '🧪 DRY-RUN' : '⚡ EXECUTE';
+        console.log(`\n🧠 Brain Think — ${mode}`);
+        console.log(`   Cycle:      ${result.cycleId}`);
+        console.log(`   Prompt:     ${result.promptVersion}`);
+        console.log(`   Confidence: ${(result.decision.confidence * 100).toFixed(0)}%`);
+        console.log(`   Summary:    ${result.decision.summary}`);
+        console.log('');
+        console.log(`   Reasoning: ${result.decision.reasoning}`);
+        console.log('');
+
+        if (result.decision.actions.length === 0) {
+          console.log('   No actions suggested.');
+        } else {
+          console.log(`   Actions (${result.decision.actions.length}):`);
+          for (const a of result.decision.actions) {
+            console.log(`     → ${a.name}(${JSON.stringify(a.arguments)})`);
+          }
+        }
+
+        if (result.executedActions.length > 0) {
+          console.log('');
+          console.log(`   Executed (${result.executedActions.length}):`);
+          for (const a of result.executedActions) {
+            const icon = a.status === 'executed' ? '✅' : a.status === 'circuit_open' ? '🔌' : '❌';
+            console.log(`     ${icon} ${a.name} — ${a.status}${a.error ? ': ' + a.error : ''}`);
+          }
+        }
+
+        if (result.queuedActions.length > 0) {
+          console.log('');
+          console.log(`   Queued for approval (${result.queuedActions.length}):`);
+          for (const a of result.queuedActions) {
+            console.log(`     ⏳ ${a.name} — ${a.reason}${a.jobId ? ' [' + a.jobId + ']' : ''}`);
+          }
+        }
+
+        console.log('');
+        console.log(`   Exit code: ${result.exitCode}`);
+      }
+
+      process.exit(result.exitCode);
+    } catch (error) {
+      if (options.json) {
+        console.log(JSON.stringify({ error: error instanceof Error ? error.message : String(error), exitCode: 1 }));
+      } else {
+        console.error('❌ Brain think failed:', error instanceof Error ? error.message : String(error));
+      }
       process.exit(1);
     }
   });

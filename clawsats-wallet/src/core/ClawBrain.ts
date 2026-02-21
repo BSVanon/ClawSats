@@ -21,6 +21,17 @@ export interface BrainPolicy {
     minHealthyPeers: number;
     targetKnownPeers: number;
   };
+  llm?: {
+    provider?: 'claude' | 'openai' | 'ollama';
+    model?: string;
+    baseUrl?: string;
+  };
+  chain?: 'test' | 'main';
+  indelible?: {
+    enabled?: boolean;
+    memoryCategory?: string;
+    maxCycleHistory?: number;
+  };
   goals: {
     autoGenerateJobs: boolean;
     generateJobsEverySeconds: number;
@@ -69,6 +80,11 @@ const DEFAULT_POLICY: BrainPolicy = {
   growth: {
     minHealthyPeers: 3,
     targetKnownPeers: 12
+  },
+  indelible: {
+    enabled: false,
+    memoryCategory: 'brain-cycle',
+    maxCycleHistory: 5
   },
   goals: {
     autoGenerateJobs: false,
