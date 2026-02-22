@@ -39,6 +39,10 @@ export class JsonRpcServer {
   private host: string;
   private apiKey?: string;
   private publicEndpoint: string;
+  private indelibleEnabled: boolean;
+  private indelibleUrl: string;
+  private indelibleOperatorAddress: string;
+  private indelibleDefaultAgentAddress: string;
 
   constructor(walletManager: WalletManager, options: ServeOptions = {}) {
     this.walletManager = walletManager;
@@ -50,6 +54,17 @@ export class JsonRpcServer {
     this.port = options.port || 3321;
     this.host = options.host || 'localhost';
     this.publicEndpoint = options.publicEndpoint || '';
+    const envIndelibleEnabled = /^(1|true|yes|on)$/i.test(String(process.env.CLAWSATS_ENABLE_INDELIBLE || '').trim());
+    this.indelibleEnabled = typeof options.enableIndelible === 'boolean' ? options.enableIndelible : envIndelibleEnabled;
+    this.indelibleUrl = String(options.indelibleUrl || process.env.CLAWSATS_INDELIBLE_URL || 'https://indelible.one')
+      .trim()
+      .replace(/\/+$/, '');
+    this.indelibleOperatorAddress = String(
+      options.indelibleOperatorAddress || process.env.CLAWSATS_INDELIBLE_OPERATOR_ADDRESS || ''
+    ).trim();
+    this.indelibleDefaultAgentAddress = String(
+      options.indelibleDefaultAgentAddress || process.env.CLAWSATS_INDELIBLE_DEFAULT_AGENT_ADDRESS || ''
+    ).trim();
 
     // SECURITY: If binding to a public interface, REQUIRE an API key.
     // If none provided, auto-generate one and print it once.
@@ -140,7 +155,7 @@ export class JsonRpcServer {
 
   private authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): void {
     // Public endpoints — never require auth
-    const publicPaths = ['/health', '/discovery', '/wallet/invite', '/wallet/announce', '/wallet/submit-payment', '/scholarships', '/scholarships/dashboard', '/courses/metrics', '/donate', '/courses'];
+    const publicPaths = ['/health', '/discovery', '/dashboard', '/api/status', '/wallet/invite', '/wallet/announce', '/wallet/submit-payment', '/scholarships', '/scholarships/dashboard', '/courses/metrics', '/donate', '/courses'];
     if (publicPaths.includes(req.path) || req.path.startsWith('/call/') || req.path.startsWith('/static/') || req.path.startsWith('/donor/') || req.path.startsWith('/courses/')) {
       return next();
     }
@@ -220,6 +235,94 @@ export class JsonRpcServer {
           error: errorMessage,
           timestamp: new Date().toISOString()
         });
+      }
+    });
+
+    // ── Dashboard: operator web UI ─────────────────────────────────────
+    this.app.get('/dashboard', (req: express.Request, res: express.Response) => {
+      const dashboardPath = require('path').join(process.cwd(), 'public', 'dashboard.html');
+      if (require('fs').existsSync(dashboardPath)) {
+        res.sendFile(dashboardPath);
+      } else {
+        res.status(404).json({ error: 'Dashboard not found. Place dashboard.html in public/' });
+      }
+    });
+
+    // Dashboard API: aggregated status for the web UI
+    this.app.get('/api/status', async (req: express.Request, res: express.Response) => {
+      try {
+        const config = this.walletManager.getConfig();
+        const totalCallsServed = Array.from(this.callStats.values()).reduce((a, b) => a + b, 0);
+        const capStats: Record<string, number> = {};
+        for (const [cap, count] of this.callStats) capStats[cap] = count;
+
+        // Read brain data from disk
+        const dataDir = require('path').join(process.cwd(), 'data');
+        const fs = require('fs');
+        let courseState: any = null;
+        let watchPeers: any = null;
+        let brainJobs: any = null;
+        let brainEvents: any[] = [];
+        try { courseState = JSON.parse(fs.readFileSync(require('path').join(dataDir, 'course-state.json'), 'utf8')); } catch {}
+        try { watchPeers = JSON.parse(fs.readFileSync(require('path').join(dataDir, 'watch-peers.json'), 'utf8')); } catch {}
+        try { brainJobs = JSON.parse(fs.readFileSync(require('path').join(dataDir, 'brain-jobs.json'), 'utf8')); } catch {}
+        try {
+          const raw = fs.readFileSync(require('path').join(dataDir, 'brain-events.jsonl'), 'utf8');
+          const lines = raw.trim().split('\n').filter(Boolean);
+          brainEvents = lines.slice(-20).reverse().map((l: string) => { try { return JSON.parse(l); } catch { return null; } }).filter(Boolean);
+        } catch {}
+
+        const peers = Array.isArray(watchPeers?.peers) ? watchPeers.peers : [];
+        const completions = courseState?.completions && typeof courseState.completions === 'object'
+          ? Object.keys(courseState.completions) : [];
+        const jobs = Array.isArray(brainJobs?.jobs) ? brainJobs.jobs : [];
+        const pendingJobs = jobs.filter((j: any) => j.status === 'pending').length;
+        const failedJobs = jobs.filter((j: any) => j.status === 'failed').length;
+        const completedJobs = jobs.filter((j: any) => j.status === 'completed').length;
+        const approvalJobs = jobs.filter((j: any) => j.status === 'needs_approval').length;
+
+        res.json({
+          identity: config?.identityKey || 'unknown',
+          chain: config?.chain || 'unknown',
+          uptime: Math.floor(process.uptime()),
+          capabilities: this.capabilityRegistry.list().map(c => ({
+            name: c.name, description: c.description, pricePerCall: c.pricePerCall,
+            callsServed: capStats[c.name] || 0
+          })),
+          reputation: {
+            totalCallsServed,
+            uniqueCallers: this.uniqueCallers.size,
+            referralsEarned: Array.from(this.referralLedger.values()).reduce((a, b) => a + b, 0)
+          },
+          peers: peers.map((p: any) => ({
+            identityKey: p.identityKey,
+            endpoint: p.endpoint,
+            capabilities: p.capabilities || [],
+            lastSeenAt: p.lastSeenAt
+          })),
+          peerCount: peers.length,
+          education: {
+            coursesCompleted: completions,
+            coursesAvailable: this.courseManager.courseCount
+          },
+          memory: this.onChainMemory.getStats(),
+          jobs: {
+            pending: pendingJobs,
+            completed: completedJobs,
+            failed: failedJobs,
+            needsApproval: approvalJobs,
+            recent: jobs.slice(-10).reverse().map((j: any) => ({
+              id: j.id, capability: j.capability, status: j.status,
+              strategy: j.strategy, error: j.error, createdAt: j.createdAt
+            }))
+          },
+          recentEvents: brainEvents.slice(0, 10),
+          endpoint: this.publicEndpoint || `http://${this.host}:${this.port}`,
+          timestamp: new Date().toISOString()
+        });
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        res.status(500).json({ error: msg });
       }
     });
 
@@ -1545,6 +1648,7 @@ export class JsonRpcServer {
     this.capabilityRegistry.registerDnsResolve(identityKey);
     this.capabilityRegistry.registerVerifyReceipt(walletProxy, identityKey);
     this.capabilityRegistry.registerPeerHealthCheck(identityKey);
+    this.registerOptionalIndelibleCapabilities();
 
     // BSV Mentor: premium knowledge-as-a-service (25 sats)
     // Uses MCP server if available, falls back to embedded knowledge.
@@ -1555,6 +1659,126 @@ export class JsonRpcServer {
     });
     this.capabilityRegistry.register(mentorCap);
     log(TAG, `Registered bsv_mentor capability (25 sats, MCP: ${process.env.MCP_ENDPOINT || 'localhost:3100'})`);
+  }
+
+  /**
+   * Optional Phase A integration: register Indelible-backed capabilities behind a feature flag.
+   * Core payment/auth stays in ClawSats `/call/:capability`; this only adds handlers.
+   */
+  private registerOptionalIndelibleCapabilities(): void {
+    if (!this.indelibleEnabled) return;
+
+    if (!this.indelibleOperatorAddress) {
+      logWarn(TAG, 'Indelible integration enabled but missing operator address. Skipping save_context/load_context registration.');
+      return;
+    }
+
+    let baseUrl = this.indelibleUrl;
+    try {
+      const parsed = new URL(baseUrl);
+      if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+        throw new Error('invalid protocol');
+      }
+      baseUrl = parsed.toString().replace(/\/+$/, '');
+    } catch {
+      logWarn(TAG, `Indelible integration URL is invalid: ${this.indelibleUrl}`);
+      return;
+    }
+
+    if (this.capabilityRegistry.has('save_context') || this.capabilityRegistry.has('load_context')) {
+      logWarn(TAG, 'Indelible capability names already registered. Skipping duplicate registration.');
+      return;
+    }
+
+    const operatorAddress = this.indelibleOperatorAddress;
+    const defaultAgentAddress = this.indelibleDefaultAgentAddress;
+    const resolveAgentAddress = (params: any): string => {
+      const explicit = typeof params?.agentAddress === 'string' ? params.agentAddress.trim() : '';
+      return explicit || defaultAgentAddress;
+    };
+
+    const callIndelible = async (path: string, payload: Record<string, unknown>) => {
+      const response = await fetch(`${baseUrl}${path}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Operator-Address': operatorAddress
+        },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(20_000)
+      });
+
+      const contentType = response.headers.get('content-type') || '';
+      const body = contentType.includes('application/json')
+        ? await response.json()
+        : await response.text();
+
+      if (!response.ok) {
+        const details = typeof body === 'string' ? body : JSON.stringify(body);
+        throw new Error(`Indelible request failed (${response.status}): ${details}`);
+      }
+
+      return body;
+    };
+
+    this.capabilityRegistry.register({
+      name: 'save_context',
+      description: 'Persist agent context via Indelible bridge (feature-flagged Phase A integration).',
+      pricePerCall: 15,
+      tags: ['memory', 'persistence', 'indelible'],
+      handler: async (params: any) => {
+        const messages = params?.messages;
+        if (!Array.isArray(messages) || messages.length === 0) {
+          throw new Error('messages array required');
+        }
+
+        const agentAddress = resolveAgentAddress(params);
+        if (!agentAddress) {
+          throw new Error('agentAddress required (or set CLAWSATS_INDELIBLE_DEFAULT_AGENT_ADDRESS)');
+        }
+
+        const agentId = typeof params?.agentId === 'string' && params.agentId.trim()
+          ? params.agentId.trim()
+          : agentAddress;
+        const summary = typeof params?.summary === 'string' && params.summary.trim()
+          ? params.summary.trim()
+          : `Agent ${agentId} session`;
+
+        return callIndelible('/api/agents/save', {
+          messages,
+          summary,
+          agentAddress,
+          agentId,
+          operatorAddress
+        });
+      }
+    });
+
+    this.capabilityRegistry.register({
+      name: 'load_context',
+      description: 'Load agent context via Indelible bridge (feature-flagged Phase A integration).',
+      pricePerCall: 10,
+      tags: ['memory', 'recall', 'indelible'],
+      handler: async (params: any) => {
+        const agentAddress = resolveAgentAddress(params);
+        if (!agentAddress) {
+          throw new Error('agentAddress required (or set CLAWSATS_INDELIBLE_DEFAULT_AGENT_ADDRESS)');
+        }
+
+        const requestedNumSessions = Number(params?.numSessions);
+        const numSessions = Number.isFinite(requestedNumSessions) && requestedNumSessions > 0
+          ? Math.min(20, Math.floor(requestedNumSessions))
+          : 3;
+
+        return callIndelible('/api/agents/load', {
+          agentAddress,
+          numSessions,
+          operatorAddress
+        });
+      }
+    });
+
+    log(TAG, `Indelible integration enabled: save_context/load_context registered (${baseUrl})`);
   }
 
   /**

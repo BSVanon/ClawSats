@@ -665,6 +665,10 @@ program
   .option('-H, --host <host>', 'Host to bind to', 'localhost')
   .option('-k, --api-key <key>', 'API key for admin JSON-RPC (auto-generated if public bind)')
   .option('--endpoint <url>', 'Public endpoint URL to advertise (for /discovery)')
+  .option('--enable-indelible', 'Enable optional Indelible save_context/load_context capabilities')
+  .option('--indelible-url <url>', 'Indelible base URL (default: env CLAWSATS_INDELIBLE_URL or https://indelible.one)')
+  .option('--indelible-operator-address <address>', 'Operator address required by Indelible API')
+  .option('--indelible-default-agent-address <address>', 'Default agent address when capability params omit agentAddress')
   .option('--no-cors', 'Disable CORS', false)
   .option('--enable-discovery', 'Enable discovery endpoint', true)
   .option('--config <path>', 'Path to wallet config file', 'config/wallet-config.json')
@@ -687,7 +691,11 @@ program
         apiKey: options.apiKey,
         publicEndpoint: options.endpoint,
         cors: options.cors,
-        enableDiscovery: options.enableDiscovery
+        enableDiscovery: options.enableDiscovery,
+        enableIndelible: options.enableIndelible === true ? true : undefined,
+        indelibleUrl: options.indelibleUrl,
+        indelibleOperatorAddress: options.indelibleOperatorAddress,
+        indelibleDefaultAgentAddress: options.indelibleDefaultAgentAddress
       };
 
       const server = new JsonRpcServer(walletManager, serveOptions);
@@ -980,18 +988,28 @@ program
     }
   });
 
-// Earn command — one-command UX (BrowserAI #7)
-// "If it's more than a minute or two, most Claws won't bother."
+// Earn command — unified single-process UX
+// One command: wallet + server + peer discovery + brain jobs + dashboard.
+// No more juggling 3 terminals.
 program
   .command('earn')
-  .description('One command: create wallet + start server + publish beacon. You are live.')
+  .description('One command: wallet + server + discovery + brain + dashboard. Everything in one process.')
   .option('-p, --port <port>', 'Port to listen on', '3321')
   .option('-H, --host <host>', 'Host to bind to', '0.0.0.0')
   .option('-c, --chain <chain>', 'Blockchain network (main/test)', 'main')
   .option('-n, --name <name>', 'Wallet name', `claw-${Date.now()}`)
   .option('-k, --api-key <key>', 'API key for admin JSON-RPC (auto-generated if public bind)')
   .option('--endpoint <url>', 'Public endpoint URL to advertise')
+  .option('--enable-indelible', 'Enable optional Indelible save_context/load_context capabilities')
+  .option('--indelible-url <url>', 'Indelible base URL (default: env CLAWSATS_INDELIBLE_URL or https://indelible.one)')
+  .option('--indelible-operator-address <address>', 'Operator address required by Indelible API')
+  .option('--indelible-default-agent-address <address>', 'Default agent address when capability params omit agentAddress')
   .option('--no-beacon', 'Skip on-chain beacon publication')
+  .option('--no-watch', 'Disable built-in peer discovery loop')
+  .option('--no-brain', 'Disable built-in brain job execution loop')
+  .option('--watch-interval <seconds>', 'Seconds between discovery sweeps (default: from policy)', '120')
+  .option('--directory-url <url>', 'Directory API URL for seed bootstrap', process.env.CLAWSATS_DIRECTORY_URL || 'https://clawsats.com/api/directory')
+  .option('--policy <path>', 'Path to brain policy file', 'data/brain-policy.json')
   .action(async (options) => {
     try {
       const port = parseInt(options.port, 10);
@@ -1023,7 +1041,11 @@ program
         apiKey: options.apiKey,
         publicEndpoint,
         cors: true,
-        enableDiscovery: true
+        enableDiscovery: true,
+        enableIndelible: options.enableIndelible === true ? true : undefined,
+        indelibleUrl: options.indelibleUrl,
+        indelibleOperatorAddress: options.indelibleOperatorAddress,
+        indelibleDefaultAgentAddress: options.indelibleDefaultAgentAddress
       });
       await server.start();
 
@@ -1051,18 +1073,207 @@ program
         }
       }
 
+      // ── Step 4: Embedded peer discovery (replaces standalone `watch` command) ──
+      const dataDir = join(process.cwd(), 'data');
+      const earnBrain = new ClawBrain(dataDir, options.policy);
+      const earnPolicy = earnBrain.loadPolicy();
+      const earnJobStore = new BrainJobStore(dataDir);
+      const earnKnownPeers = new Map<string, { endpoint: string; capabilities: string[] }>();
+      const watchEnabled = options.watch !== false;
+      const brainEnabled = options.brain !== false;
+      const watchIntervalSec = Math.max(30, parseInt(options.watchInterval || String(earnPolicy.timers.discoveryIntervalSeconds), 10));
+      const directoryUrl = (options.directoryUrl || '').trim();
+      const DIRECTORY_REFRESH_MS = 10 * 60 * 1000;
+      let lastDirRefresh = 0;
+      let lastDirRegister = 0;
+      const dirRegisterEveryMs = Math.max(30, earnPolicy.timers.directoryRegisterEverySeconds) * 1000;
+      const dirRegisterEnabled = earnPolicy.timers.directoryRegisterEnabled;
+      const earnSeeds = new Set<string>();
+      const watchPeersPath = join(dataDir, 'watch-peers.json');
+      let sweepCount = 0;
+
+      // Load persisted peers
+      const persistedWatch = parseJsonFile(watchPeersPath);
+      const persistedRows = Array.isArray(persistedWatch?.peers) ? persistedWatch.peers : [];
+      for (const row of persistedRows) {
+        if (!row || typeof row.identityKey !== 'string') continue;
+        if (row.identityKey === config.identityKey) continue;
+        const ep = normalizePublicEndpoint(row.endpoint);
+        if (!ep) continue;
+        earnKnownPeers.set(row.identityKey, {
+          endpoint: ep,
+          capabilities: Array.isArray(row.capabilities) ? row.capabilities : []
+        });
+      }
+
+      function persistEarnPeers() {
+        const peers = Array.from(earnKnownPeers.entries()).map(([identityKey, peer]) => ({
+          identityKey, endpoint: peer.endpoint, capabilities: peer.capabilities,
+          lastSeenAt: new Date().toISOString()
+        }));
+        writeFileSync(watchPeersPath, JSON.stringify({ peers }, null, 2), 'utf8');
+      }
+
+      async function refreshDirSeeds(force = false): Promise<number> {
+        const now = Date.now();
+        if (!force && now - lastDirRefresh < DIRECTORY_REFRESH_MS) return 0;
+        let added = 0;
+        try {
+          const res = await fetch(directoryUrl, { signal: AbortSignal.timeout(10000) });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const payload: any = await res.json();
+          const rows = Array.isArray(payload?.claws) ? payload.claws : [];
+          for (const row of rows) {
+            const ep = normalizePublicEndpoint(row?.endpoint);
+            if (ep && !earnSeeds.has(ep)) { earnSeeds.add(ep); added++; }
+          }
+          lastDirRefresh = now;
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          if (sweepCount === 0) console.log(`  Directory bootstrap skipped (${msg})`);
+        }
+        return added;
+      }
+
+      async function registerInDir(): Promise<void> {
+        if (!dirRegisterEnabled) return;
+        const now = Date.now();
+        if (now - lastDirRegister < dirRegisterEveryMs) return;
+        lastDirRegister = now;
+        const ep = normalizePublicEndpoint(publicEndpoint);
+        if (!ep || /localhost|127\.0\.0\.1|0\.0\.0\.0/i.test(ep)) return;
+        const caps = server.getCapabilityRegistry().listNames();
+        const regUrl = directoryUrl.replace(/\/$/, '') + '/register';
+        try {
+          await fetch(regUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ identityKey: config.identityKey, endpoint: ep, capabilities: caps }),
+            signal: AbortSignal.timeout(8000)
+          });
+        } catch { /* silent */ }
+      }
+
+      async function earnDiscoverySweep(): Promise<void> {
+        sweepCount++;
+        const startTime = Date.now();
+        let discovered = 0;
+        let probed = 0;
+
+        await registerInDir();
+        await refreshDirSeeds();
+
+        const toProbe = new Set<string>(earnSeeds);
+        for (const [, peer] of earnKnownPeers) {
+          const ep = normalizePublicEndpoint(peer.endpoint);
+          if (ep) toProbe.add(ep);
+        }
+
+        if (toProbe.size === 0) {
+          await refreshDirSeeds(true);
+          for (const ep of earnSeeds) toProbe.add(ep);
+        }
+
+        const wallet = walletManager.getWallet();
+        const sharing = new SharingProtocol(config, wallet);
+
+        for (const endpoint of toProbe) {
+          probed++;
+          try {
+            const discRes = await fetch(`${endpoint}/discovery`, { signal: AbortSignal.timeout(8000) });
+            if (!discRes.ok) continue;
+            const info: any = await discRes.json();
+            if (!info.identityKey || info.identityKey === config.identityKey) continue;
+            const advertisedEp = normalizePublicEndpoint(info?.endpoints?.jsonrpc) || endpoint;
+            const isNew = !earnKnownPeers.has(info.identityKey);
+            earnKnownPeers.set(info.identityKey, {
+              endpoint: advertisedEp,
+              capabilities: info.paidCapabilities?.map((c: any) => c.name) || []
+            });
+
+            if (isNew) {
+              discovered++;
+              const caps = info.paidCapabilities?.map((c: any) => `${c.name}(${c.pricePerCall}sat)`).join(', ') || 'none';
+              console.log(`  ✨ NEW: ${info.identityKey.substring(0, 16)}... at ${advertisedEp} — ${caps}`);
+
+              // Auto-invite so they know about us too
+              if (earnPolicy.timers.autoInviteOnDiscovery) {
+                try {
+                  const invitation = await sharing.createInvitation(`claw://${info.identityKey.substring(0, 16)}`, {
+                    recipientEndpoint: advertisedEp,
+                    recipientIdentityKey: info.identityKey,
+                    senderEndpoint: publicEndpoint
+                  });
+                  const invRes = await fetch(`${advertisedEp}/wallet/invite`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(invitation),
+                    signal: AbortSignal.timeout(8000)
+                  });
+                  if (invRes.ok) console.log(`    📨 Auto-invited — mutual peer registration`);
+                } catch { /* silent */ }
+              }
+            }
+          } catch { /* peer unreachable */ }
+        }
+
+        persistEarnPeers();
+
+        // Brain job execution (if enabled)
+        let jobSummary = { processed: 0, completed: 0, failed: 0, awaitingApproval: 0 };
+        if (brainEnabled) {
+          const goalSummary = enqueueGoalJobsFromPolicy('earn', earnPolicy, earnBrain, earnJobStore);
+          if (goalSummary.generated > 0) {
+            console.log(`  Goals: queued ${goalSummary.generated} job(s)`);
+          }
+          jobSummary = await executeBrainJobs({
+            source: 'earn',
+            allowMemoryWrite: false,
+            maxJobs: Math.max(1, earnPolicy.decisions.maxJobsPerSweep || 1),
+            dataDir,
+            policy: earnPolicy,
+            brain: earnBrain,
+            jobs: earnJobStore,
+            wallet,
+            identityKey: config.identityKey,
+            peers: Array.from(earnKnownPeers.entries()).map(([ik, p]) => ({
+              identityKey: ik, endpoint: p.endpoint, capabilities: p.capabilities
+            })),
+            localEndpoint: publicEndpoint
+          });
+        }
+
+        const elapsed = Date.now() - startTime;
+        const jobInfo = jobSummary.processed > 0
+          ? ` | jobs: ${jobSummary.completed}✓ ${jobSummary.failed}✗ ${jobSummary.awaitingApproval}⏳`
+          : '';
+        console.log(`  [sweep #${sweepCount}] probed ${probed}, +${discovered} new, ${earnKnownPeers.size} total (${elapsed}ms)${jobInfo}`);
+      }
+
       // Summary
       const caps = server.getCapabilityRegistry().listNames();
       console.log(`\n🟢 YOU ARE LIVE`);
-      console.log(`  Manifest: ${publicEndpoint}/discovery`);
-      console.log(`  Invite:   POST ${publicEndpoint}/wallet/invite`);
+      console.log(`  Discovery: ${publicEndpoint}/discovery`);
+      console.log(`  Dashboard: ${publicEndpoint}/dashboard`);
+      console.log(`  Invite:    POST ${publicEndpoint}/wallet/invite`);
       console.log(`  Paid capabilities: ${caps.join(', ')}`);
-      console.log(`\n  Share with another Claw:`);
-      console.log(`    node dist/cli/index.js share -r http://<peer>:3321`);
+      if (watchEnabled) console.log(`  Peer discovery: every ${watchIntervalSec}s (directory: ${directoryUrl})`);
+      if (brainEnabled) console.log(`  Brain jobs: enabled (policy: ${earnBrain.getPolicyPath()})`);
+      console.log(`\n  Everything runs in this single process. Ctrl+C to stop.\n`);
+
+      // Start discovery + brain loop
+      if (watchEnabled) {
+        await registerInDir();
+        const initialAdded = await refreshDirSeeds(true);
+        if (initialAdded > 0) console.log(`  Added ${initialAdded} seed endpoints from directory`);
+        await earnDiscoverySweep();
+        setInterval(() => { earnDiscoverySweep().catch(() => {}); }, watchIntervalSec * 1000);
+      }
 
       // Graceful shutdown
       const shutdown = async () => {
         console.log('\nShutting down...');
+        if (watchEnabled) persistEarnPeers();
         await server.stop();
         process.exit(0);
       };
