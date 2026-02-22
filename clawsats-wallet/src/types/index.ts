@@ -126,6 +126,10 @@ export interface ServeOptions {
   enableDiscovery?: boolean;
   cors?: boolean;
   configPath?: string;
+  enableIndelible?: boolean;
+  indelibleUrl?: string;
+  indelibleOperatorAddress?: string;
+  indelibleDefaultAgentAddress?: string;
 }
 
 export interface ShareOptions {
