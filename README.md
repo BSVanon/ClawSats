@@ -206,6 +206,12 @@ The plugin exposes:
 
 OpenClaw's built-in x402 skill targets USDC on EVM networks. ClawSats uses **BSV satoshis** via BRC-105 — real Bitcoin micropayments with no token wrapping, no gas fees, no bridge. The ClawSats skill/plugin handles the BSV-native 402 flow natively.
 
+## Integration Plan
+
+For strict cross-repo integration status (ClawSats + ClawSats.com + ClawSats-Indelible) and canonical BRC-alignment decisions, use:
+
+- `docs/ClawSats_Wallet_Integration_Analysis.md`
+
 ## Quick Start
 
 ### Prerequisites
@@ -544,6 +550,35 @@ const result = await PaymentHelper.payForCapability(
 | `health` | Check wallet server health |
 | `config` | Show wallet configuration |
 
+## Optional Indelible Integration (Phase A)
+
+ClawSats can now register `save_context` and `load_context` as optional paid capabilities behind a feature flag, while keeping the canonical ClawSats `/call/:capability` payment gate unchanged.
+
+Enable with CLI flags:
+
+```bash
+node dist/cli/index.js earn \
+  --enable-indelible \
+  --indelible-operator-address YOUR_OPERATOR_ADDRESS \
+  --indelible-default-agent-address YOUR_AGENT_ADDRESS
+```
+
+or with environment variables:
+
+```bash
+export CLAWSATS_ENABLE_INDELIBLE=true
+export CLAWSATS_INDELIBLE_OPERATOR_ADDRESS=YOUR_OPERATOR_ADDRESS
+export CLAWSATS_INDELIBLE_DEFAULT_AGENT_ADDRESS=YOUR_AGENT_ADDRESS
+# optional override (default is https://indelible.one)
+export CLAWSATS_INDELIBLE_URL=https://indelible.one
+node dist/cli/index.js serve
+```
+
+Notes:
+- If `agentAddress` is omitted in a `save_context`/`load_context` call, ClawSats uses `CLAWSATS_INDELIBLE_DEFAULT_AGENT_ADDRESS` (or `--indelible-default-agent-address`).
+- If Indelible is enabled but no operator address is configured, capabilities are not registered.
+- This integration does **not** replace ClawSats payment middleware and does not bypass wallet internalization checks.
+
 ## Using as a Library
 
 ```typescript
@@ -711,11 +746,35 @@ All fee and limit values are hardcoded in `src/protocol/constants.ts`. No lookup
 |----------|-------|---------|
 | `FEE_SATS` | 2 | Mandatory protocol fee per paid call |
 | `FEE_KID` | `clawsats-fee-v1` | Fee key identifier |
+| `FEE_IDENTITY_KEY` | `0307102dc99293edba7f75bf881712652879c151b454ebf5d8e7a0ba07c4d17364` | Canonical protocol fee treasury identity key (v1) |
 | `INVITE_TTL_MS` | 300,000 (5 min) | Invitation expiry |
 | `INVITE_MAX_PER_HOUR` | 20 | Receiver-enforced rate limit |
 | `BROADCAST_HOP_LIMIT` | 2 | Max relay hops for broadcast_listing |
 | `BROADCAST_AUDIENCE_LIMIT` | 10 | Max peers per paid broadcast |
 | `MVP_WALLET_INTERFACE` | `@bsv/wallet-toolbox::WalletInterface` | Locked wallet interface |
+
+`FEE_IDENTITY_KEY` is hardcoded and integrity-checked in `src/protocol/constants.ts`.
+In `clawsats://v1`, every paid call includes output 1 with `FEE_SATS` directed to a BRC-29 derivation of that key.
+Whoever controls the matching private key receives protocol-fee outputs.
+
+## Identity Roles (Operator Reference)
+
+Do not mix these identities:
+
+- **Provider/Merchant Claw identity**: the wallet running your service endpoint (`/discovery`, `/call/:capability`), from `config/wallet-config.json`.
+- **Faucet identity**: the wallet configured by `FAUCET_ROOT_KEY_HEX` on the website/faucet server.
+- **Protocol fee treasury identity**: `FEE_IDENTITY_KEY` in `src/protocol/constants.ts`.
+
+Quick checks:
+
+```bash
+# Provider/Merchant key (on claw VPS)
+jq -r '.identityKey' /opt/clawsats/clawsats-wallet/config/wallet-config.json
+curl -sS http://127.0.0.1:3321/discovery | jq -r '.identityKey'
+
+# Protocol fee treasury key (repo code)
+rg -n "FEE_IDENTITY_KEY" /opt/clawsats/clawsats-wallet/src/protocol/constants.ts
+```
 
 ## How Claws Spread
 
