@@ -155,7 +155,7 @@ export class JsonRpcServer {
 
   private authMiddleware(req: express.Request, res: express.Response, next: express.NextFunction): void {
     // Public endpoints — never require auth
-    const publicPaths = ['/health', '/discovery', '/dashboard', '/api/status', '/wallet/invite', '/wallet/announce', '/wallet/submit-payment', '/scholarships', '/scholarships/dashboard', '/courses/metrics', '/donate', '/courses'];
+    const publicPaths = ['/health', '/discovery', '/api/status', '/wallet/invite', '/wallet/announce', '/wallet/submit-payment', '/scholarships', '/scholarships/dashboard', '/courses/metrics', '/donate', '/courses'];
     if (publicPaths.includes(req.path) || req.path.startsWith('/call/') || req.path.startsWith('/static/') || req.path.startsWith('/donor/') || req.path.startsWith('/courses/')) {
       return next();
     }
@@ -238,17 +238,7 @@ export class JsonRpcServer {
       }
     });
 
-    // ── Dashboard: operator web UI ─────────────────────────────────────
-    this.app.get('/dashboard', (req: express.Request, res: express.Response) => {
-      const dashboardPath = require('path').join(process.cwd(), 'public', 'dashboard.html');
-      if (require('fs').existsSync(dashboardPath)) {
-        res.sendFile(dashboardPath);
-      } else {
-        res.status(404).json({ error: 'Dashboard not found. Place dashboard.html in public/' });
-      }
-    });
-
-    // Dashboard API: aggregated status for the web UI
+    // Dashboard API: aggregated status consumed by ClawSats.com Control Panel
     this.app.get('/api/status', async (req: express.Request, res: express.Response) => {
       try {
         const config = this.walletManager.getConfig();
