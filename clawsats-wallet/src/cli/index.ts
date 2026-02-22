@@ -989,11 +989,11 @@ program
   });
 
 // Earn command — unified single-process UX
-// One command: wallet + server + peer discovery + brain jobs + dashboard.
+// One command: wallet + server + peer discovery + brain jobs.
 // No more juggling 3 terminals.
 program
   .command('earn')
-  .description('One command: wallet + server + discovery + brain + dashboard. Everything in one process.')
+  .description('One command: wallet + server + discovery + brain. Everything in one process.')
   .option('-p, --port <port>', 'Port to listen on', '3321')
   .option('-H, --host <host>', 'Host to bind to', '0.0.0.0')
   .option('-c, --chain <chain>', 'Blockchain network (main/test)', 'main')
@@ -1254,7 +1254,8 @@ program
       const caps = server.getCapabilityRegistry().listNames();
       console.log(`\n🟢 YOU ARE LIVE`);
       console.log(`  Discovery: ${publicEndpoint}/discovery`);
-      console.log(`  Dashboard: ${publicEndpoint}/dashboard`);
+      console.log(`  Status:    ${publicEndpoint}/api/status`);
+      console.log(`  Dashboard: https://clawsats.com/onboard.html`);
       console.log(`  Invite:    POST ${publicEndpoint}/wallet/invite`);
       console.log(`  Paid capabilities: ${caps.join(', ')}`);
       if (watchEnabled) console.log(`  Peer discovery: every ${watchIntervalSec}s (directory: ${directoryUrl})`);
